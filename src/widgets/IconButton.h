@@ -5,6 +5,7 @@
 #include <QPainterPath>
 #include <QTimer>
 #include <QVariantAnimation>
+#include "common/ThemeManager.h"
 
 /**
  * @brief 24x24 アイコンボタン（Eye / Trash）
@@ -22,6 +23,10 @@ public:
     {
         setFixedSize(24, 24);
         setCursor(Qt::PointingHandCursor);
+
+        // テーマ変更時に再描画
+        connect(&Darwin::ThemeManager::instance(), &Darwin::ThemeManager::themeChanged,
+                this, [this]() { update(); });
 
         if (m_type == Eye) {
             m_eyeOpenness = 1.0f;
@@ -56,19 +61,20 @@ protected:
         p.setRenderHint(QPainter::Antialiasing);
 
         QColor color = QColor("#64748b");
+        const bool isDark = Darwin::ThemeManager::instance().isDarkMode();
+        const QColor hoverText = isDark ? QColor("#e2e8f0") : QColor("#1e293b");
         if (m_type == Eye) {
-            if (underMouse()) color = QColor("#FF3366");
-            else if (isChecked()) color = QColor("#1e293b");
+            if (underMouse()) color = QColor("#ef4444");
         } else if (m_type == Trash) {
             if (underMouse()) color = QColor("#ef4444");
         } else if (m_type == Folder) {
-            color = QColor("#64748b"); // DAW風の落ち着いた色
-            if (underMouse()) color = QColor("#1e293b"); // Hover
+            color = QColor("#64748b");
+            if (underMouse()) color = hoverText;
         } else if (m_type == Chevron) {
-            if (underMouse()) color = QColor("#1e293b");
+            if (underMouse()) color = hoverText;
         } else if (m_type == Magnet) {
             if (isChecked()) color = QColor("#FF3366");
-            else if (underMouse()) color = QColor("#1e293b");
+            else if (underMouse()) color = hoverText;
         }
 
         p.setPen(QPen(color, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
