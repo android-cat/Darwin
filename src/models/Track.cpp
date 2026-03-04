@@ -227,7 +227,13 @@ bool Track::loadPlugin(const QString& pluginPath)
         QMutexLocker lock(&m_pluginMutex);
         m_pluginInstance = instance;
     }
-    setInstrumentName(instance->pluginName());
+    QString pName = instance->pluginName();
+    setInstrumentName(pName);
+    
+    // トラック名が未設定またはデフォルト名（"New Track"）の場合はプラグイン名を適用
+    if (m_name.isEmpty() || m_name == "New Track") {
+        setName(pName);
+    }
     emit propertyChanged();
     return true;
 }

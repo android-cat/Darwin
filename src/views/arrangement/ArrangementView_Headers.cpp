@@ -187,7 +187,7 @@ QWidget* ArrangementView::createTrackHeader(Track* track)
     tLayout->setContentsMargins(8, 0, 16, 0);
     tLayout->setSpacing(4);
     
-    QLineEdit *nameEdit = new QLineEdit(track->instrumentName().isEmpty() ? track->name() : track->instrumentName());
+    QLineEdit *nameEdit = new QLineEdit(track->name());
     nameEdit->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     nameEdit->setCursorPosition(0);
     CustomTooltip::attach(nameEdit);

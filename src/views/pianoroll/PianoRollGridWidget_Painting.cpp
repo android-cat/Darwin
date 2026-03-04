@@ -25,7 +25,7 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event)
     QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing, false);
+    p.setRenderHint(QPainter::Antialiasing, true);
     
     int widgetWidth = width();
     int gridHeight = NUM_ROWS * ROW_HEIGHT;
@@ -37,11 +37,11 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
     p.fillRect(rect(), ThemeManager::instance().panelBackgroundColor());
     
     // アクティブクリップの範囲を計算
-    int clipStartX = 0;
-    int clipEndX = widgetWidth;
+    double clipStartX = 0;
+    double clipEndX = widgetWidth;
     if (m_activeClip) {
-        clipStartX = static_cast<int>(m_activeClip->startTick() * ppt);
-        clipEndX = static_cast<int>(m_activeClip->endTick() * ppt);
+        clipStartX = m_activeClip->startTick() * ppt;
+        clipEndX = m_activeClip->endTick() * ppt;
     }
     
     // 行（半音）を描画
@@ -57,7 +57,7 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
         }
         
         p.setPen(ThemeManager::instance().gridLineTickColor()); // 横線は細めの区切り線
-        p.drawLine(0, (i + 1) * ROW_HEIGHT, widgetWidth, (i + 1) * ROW_HEIGHT);
+        p.drawLine(QPointF(0, (i + 1) * ROW_HEIGHT), QPointF(widgetWidth, (i + 1) * ROW_HEIGHT));
     }
     
     // ズームレベルに応じた縦線描画
@@ -66,9 +66,10 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
     
     // グリッド線を描画
     if (pixelsPerGridUnit >= 4) { // 最低4px間隔で描画
-        for (double x = 0; x < widgetWidth; x += pixelsPerGridUnit) {
-            int ix = static_cast<int>(x);
-            qint64 tick = static_cast<qint64>(x / ppt);
+        int numLines = static_cast<int>(widgetWidth / pixelsPerGridUnit) + 1;
+        for (int idx = 0; idx <= numLines; ++idx) {
+            double x = idx * pixelsPerGridUnit;
+            qint64 tick = idx * gridQ;
             
             if (tick % TICKS_PER_BAR == 0) {
                 // 小節線（最も濃い）
@@ -80,19 +81,20 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
                 // サブディビジョン（8分/16分/32分）
                 p.setPen(ThemeManager::instance().gridLineSubBeatColor());
             }
-            p.drawLine(ix, 0, ix, gridHeight);
+            p.drawLine(QPointF(x, 0), QPointF(x, gridHeight));
         }
     } else {
         // ズームが小さすぎる場合は拍線のみ
-        for (double x = 0; x < widgetWidth; x += pixelsPerBeat) {
-            int ix = static_cast<int>(x);
-            qint64 tick = static_cast<qint64>(x / ppt);
+        int numLines = static_cast<int>(widgetWidth / pixelsPerBeat) + 1;
+        for (int idx = 0; idx <= numLines; ++idx) {
+            double x = idx * pixelsPerBeat;
+            qint64 tick = idx * TICKS_PER_BEAT;
             if (tick % TICKS_PER_BAR == 0) {
                 p.setPen(ThemeManager::instance().gridLineColor());
             } else {
                 p.setPen(ThemeManager::instance().gridLineSubColor());
             }
-            p.drawLine(ix, 0, ix, gridHeight);
+            p.drawLine(QPointF(x, 0), QPointF(x, gridHeight));
         }
     }
     
@@ -128,16 +130,18 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
                 if (clip == m_activeClip) continue; // アクティブはスキップ（後で不透明に描画）
                 
                 for (Note* note : clip->notes()) {
-                    int x = static_cast<int>((clip->startTick() + note->startTick()) * pixelsPerTick());
-                    int w = static_cast<int>(note->durationTicks() * pixelsPerTick());
+                    double x = (clip->startTick() + note->startTick()) * pixelsPerTick();
+                    double w = note->durationTicks() * pixelsPerTick();
                     int row = pitchToRow(note->pitch());
-                    int y = row * ROW_HEIGHT;
+                    double y = row * ROW_HEIGHT;
                     
-                    QRect noteRect(x, y + 2, qMax(4, w), ROW_HEIGHT - 4);
+                    QRectF noteRect(x, y + 2, qMax(4.0, w), ROW_HEIGHT - 4);
                     
+                    p.setRenderHint(QPainter::Antialiasing, true);
                     p.setPen(QPen(ghostBorder, 1));
                     p.setBrush(ghostColor);
                     p.drawRoundedRect(noteRect, 2, 2);
+                    p.setRenderHint(QPainter::Antialiasing, false);
                 }
             }
         }
@@ -153,13 +157,13 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
         }
         
         for (Note* note : m_activeClip->notes()) {
-            int x = static_cast<int>((note->startTick() + m_activeClip->startTick()) * pixelsPerTick());
-            int w = static_cast<int>(note->durationTicks() * pixelsPerTick());
+            double x = (note->startTick() + m_activeClip->startTick()) * pixelsPerTick();
+            double w = note->durationTicks() * pixelsPerTick();
             
             int row = pitchToRow(note->pitch());
-            int y = row * ROW_HEIGHT;
+            double y = row * ROW_HEIGHT;
             
-            QRect noteRect(x, y + 2, qMax(4, w), ROW_HEIGHT - 4);
+            QRectF noteRect(x, y + 2, qMax(4.0, w), ROW_HEIGHT - 4);
             
             // アニメーション状態を取得
             float animScale = 1.0f;
@@ -196,8 +200,8 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
                 p.setRenderHint(QPainter::Antialiasing, true);
                 QColor glow = baseColor;
                 glow.setAlphaF(glowIntensity * 0.5f);
-                int expand = static_cast<int>(3 * glowIntensity);
-                QRect glowRect = noteRect.adjusted(-expand, -expand, expand, expand);
+                double expand = 3.0 * glowIntensity;
+                QRectF glowRect = noteRect.adjusted(-expand, -expand, expand, expand);
                 p.setPen(Qt::NoPen);
                 p.setBrush(glow);
                 p.drawRoundedRect(glowRect, 3, 3);
@@ -206,9 +210,11 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
 
             // 選択中のノートは明るく表示
             QColor noteColor = isSelected ? baseColor.lighter(130) : baseColor;
+            p.setRenderHint(QPainter::Antialiasing, true);
             p.setPen(QPen(noteColor.darker(120), 1));
             p.setBrush(noteColor);
             p.drawRoundedRect(noteRect, 2, 2);
+            p.setRenderHint(QPainter::Antialiasing, false);
             
             p.restore();
         }
@@ -223,11 +229,11 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
             Track* parentTrack = qobject_cast<Track*>(parentClip->parent());
             QColor color = parentTrack ? parentTrack->color() : QColor("#888888");
 
-            int x = static_cast<int>((note->startTick() + parentClip->startTick()) * pixelsPerTick());
-            int w = static_cast<int>(note->durationTicks() * pixelsPerTick());
+            double x = (note->startTick() + parentClip->startTick()) * pixelsPerTick();
+            double w = note->durationTicks() * pixelsPerTick();
             int row = pitchToRow(note->pitch());
-            int y = row * ROW_HEIGHT;
-            QRect noteRect(x, y + 2, qMax(4, w), ROW_HEIGHT - 4);
+            double y = row * ROW_HEIGHT;
+            QRectF noteRect(x, y + 2, qMax(4.0, w), ROW_HEIGHT - 4);
 
             float opacity = 1.0f;
             if (m_noteAnims.contains(note)) {
@@ -235,6 +241,7 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
             }
 
             p.save();
+            p.setRenderHint(QPainter::Antialiasing, true);
             p.setOpacity(opacity);
             p.setPen(QPen(color.darker(120), 1));
             p.setBrush(color);
@@ -249,13 +256,13 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
     }
     
     // Playhead
-    int playheadX = static_cast<int>(m_playheadPosition * pixelsPerTick());
+    double playheadX = m_playheadPosition * pixelsPerTick();
     
     // はじけ飛ぶ削除エフェクト
     drawBurstEffects(p);
     
     p.setPen(QPen(QColor("#FF3366"), 2));
-    p.drawLine(playheadX, 0, playheadX, height());
+    p.drawLine(QPointF(playheadX, 0), QPointF(playheadX, height()));
     
     // 範囲選択ラバーバンド描画
     if (m_isRubberBanding && m_rubberBandRect.isValid()) {

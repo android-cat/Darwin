@@ -76,6 +76,7 @@ void TimelineWidget::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event)
     QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
     p.fillRect(rect(), Darwin::ThemeManager::instance().panelBackgroundColor());
 
     const double barWidth = Darwin::PIXELS_PER_BAR * m_zoomLevel;
@@ -86,11 +87,11 @@ void TimelineWidget::paintEvent(QPaintEvent* event)
         double startBar = m_project->exportStartBar();
         double endBar = m_project->exportEndBar();
         if (startBar >= 0 && endBar > startBar) {
-            int x1 = static_cast<int>(startBar * barWidth);
-            int x2 = static_cast<int>(endBar * barWidth);
-            p.fillRect(0, 0, x1, height(), QColor(0, 0, 0, 18));
-            p.fillRect(x2, 0, width() - x2, height(), QColor(0, 0, 0, 18));
-            p.fillRect(x1, 0, x2 - x1, height(), QColor(59, 130, 246, 25));
+            double x1 = startBar * barWidth;
+            double x2 = endBar * barWidth;
+            p.fillRect(QRectF(0, 0, x1, height()), QColor(0, 0, 0, 18));
+            p.fillRect(QRectF(x2, 0, width() - x2, height()), QColor(0, 0, 0, 18));
+            p.fillRect(QRectF(x1, 0, x2 - x1, height()), QColor(59, 130, 246, 25));
         }
     }
 
@@ -101,11 +102,12 @@ void TimelineWidget::paintEvent(QPaintEvent* event)
     f.setBold(true);
     p.setFont(f);
 
+    // 小節番号テキストと目盛り線
     for (int i = 0; i <= numBars; ++i) {
-        int x = static_cast<int>(i * barWidth);
+        double x = i * barWidth;
         p.setPen(QColor("#94a3b8"));
-        p.drawLine(x, 16, x, 24);
-        p.drawText(x + 4, 14, QString::number(i + 1));
+        p.drawLine(QPointF(x, 14), QPointF(x, 20));
+        p.drawText(QPointF(x + 4, 12), QString::number(i + 1));
     }
 
     // ── エクスポート範囲ハンドル ──
@@ -113,11 +115,12 @@ void TimelineWidget::paintEvent(QPaintEvent* event)
         double startBar = m_project->exportStartBar();
         double endBar = m_project->exportEndBar();
         if (startBar >= 0 && endBar > startBar) {
-            int sx = static_cast<int>(startBar * barWidth);
-            int ex = static_cast<int>(endBar * barWidth);
-            drawHandle(p, sx, QColor(34, 197, 94), true);
-            drawHandle(p, ex, QColor(239, 68, 68), false);
-            p.fillRect(sx, 0, ex - sx, 3, QColor(59, 130, 246, 180));
+            double sx = startBar * barWidth;
+            double ex = endBar * barWidth;
+            // drawHandle internally uses int currently, we might need to change it later if we want float
+            drawHandle(p, static_cast<int>(sx), QColor(34, 197, 94), true);
+            drawHandle(p, static_cast<int>(ex), QColor(239, 68, 68), false);
+            p.fillRect(QRectF(sx, 0, ex - sx, 3), QColor(59, 130, 246, 180));
         }
     }
 
@@ -209,12 +212,12 @@ void TimelineWidget::paintEvent(QPaintEvent* event)
             QFontMetrics cfm(chordFont);
 
             for (const auto& span : spans) {
-                int x1 = static_cast<int>(span.startTick * PIXELS_PER_TICK * m_zoomLevel);
-                int x2 = static_cast<int>(span.endTick   * PIXELS_PER_TICK * m_zoomLevel);
-                int spanW = x2 - x1;
-                if (spanW < 4) continue; // 極小区間はスキップ
+                double x1 = span.startTick * PIXELS_PER_TICK * m_zoomLevel;
+                double x2 = span.endTick   * PIXELS_PER_TICK * m_zoomLevel;
+                double spanW = x2 - x1;
+                if (spanW < 4.0) continue; // 極小区間はスキップ
 
-                QRect spanRect(x1 + 1, chordLaneTop + 1, spanW - 2, chordLaneH - 2);
+                QRectF spanRect(x1 + 1, chordLaneTop + 1, spanW - 2, chordLaneH - 2);
 
                 // コード帯ブロック（アクセント色の薄い背景 + 左ボーダー）
                 p.setPen(Qt::NoPen);
@@ -223,15 +226,15 @@ void TimelineWidget::paintEvent(QPaintEvent* event)
 
                 // 左端にアクセントライン
                 p.setPen(QPen(QColor("#FF3366"), 2));
-                p.drawLine(x1 + 1, chordLaneTop + 2, x1 + 1, chordLaneTop + chordLaneH - 2);
+                p.drawLine(QPointF(x1 + 1, chordLaneTop + 2), QPointF(x1 + 1, chordLaneTop + chordLaneH - 2));
 
                 // コード名テキスト（幅が十分ある場合のみ）
                 int textW = cfm.horizontalAdvance(span.name) + 6;
-                if (spanW > 12) {
+                if (spanW > 12.0) {
                     p.setPen(Darwin::ThemeManager::instance().secondaryTextColor());  // ダーク: スレートグレー
-                    int maxTextW = spanW - 8;
-                    QString elidedName = cfm.elidedText(span.name, Qt::ElideRight, maxTextW);
-                    p.drawText(x1 + 6, chordLaneTop + 2, maxTextW, chordLaneH - 4,
+                    double maxTextW = spanW - 8.0;
+                    QString elidedName = cfm.elidedText(span.name, Qt::ElideRight, static_cast<int>(maxTextW));
+                    p.drawText(QRectF(x1 + 6, chordLaneTop + 2, maxTextW, chordLaneH - 4),
                                Qt::AlignLeft | Qt::AlignVCenter, elidedName);
                 }
             }
@@ -245,9 +248,11 @@ void TimelineWidget::paintEvent(QPaintEvent* event)
 
     // ── プレイヘッド位置 ──
     if (m_project) {
-        int playheadX = static_cast<int>(m_project->playheadPosition() * Darwin::PIXELS_PER_TICK * m_zoomLevel);
+        double playheadX = m_project->playheadPosition() * Darwin::PIXELS_PER_TICK * m_zoomLevel;
+        p.setRenderHint(QPainter::Antialiasing, true);
         p.setPen(QPen(QColor("#FF3366"), 2));
-        p.drawLine(playheadX, 0, playheadX, height());
+        p.drawLine(QPointF(playheadX, 0), QPointF(playheadX, height()));
+        p.setRenderHint(QPainter::Antialiasing, false);
     }
 
     // Bottom border

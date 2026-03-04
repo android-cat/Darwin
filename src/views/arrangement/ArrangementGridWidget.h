@@ -64,7 +64,7 @@ protected:
 private:
     void drawClips(QPainter& p);
     void drawFolderSummary(QPainter& p, Track* folder, int y, int rowHeight);
-    void drawAudioWaveform(QPainter& p, const QRect& clipRect, class Clip* clip,
+    void drawAudioWaveform(QPainter& p, const QRectF& clipRect, class Clip* clip,
                            const QColor& waveColor);
     void handleMidiFileDrop(const QString& filePath, const QPoint& dropPos);
     void handleAudioFileDrop(const QString& filePath, const QPoint& dropPos);

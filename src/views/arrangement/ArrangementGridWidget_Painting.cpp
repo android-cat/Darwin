@@ -20,7 +20,7 @@ void ArrangementGridWidget::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event)
     QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing, false);
+    p.setRenderHint(QPainter::Antialiasing, true);
 
     int rowHeight = 100;
     double ppBar = pixelsPerBar();
@@ -56,7 +56,7 @@ void ArrangementGridWidget::paintEvent(QPaintEvent *event)
     // 各線の位置を独立計算（累積誤差を防止してTimelineWidgetと一致させる）
     int totalSubdivs = static_cast<int>(widgetWidth * subdivsPerBar / ppBar) + 1;
     for (int idx = 0; idx <= totalSubdivs; ++idx) {
-        int x = static_cast<int>(idx * ppBar / subdivsPerBar);
+        double x = idx * ppBar / subdivsPerBar;
         if (x >= widgetWidth) break;
         
         if (idx % subdivsPerBar == 0) {
@@ -72,16 +72,16 @@ void ArrangementGridWidget::paintEvent(QPaintEvent *event)
             // 16分/32分音符線 — 最も薄い
             p.setPen(ThemeManager::instance().gridLineTickColor());
         }
-        p.drawLine(x, 0, x, widgetHeight);
+        p.drawLine(QPointF(x, 0), QPointF(x, widgetHeight));
     }
     
     // Grid Lines (Horizontal - Tracks)
     QList<Track*> visTracks = m_project ? visibleTracks() : QList<Track*>();
     for(int i = 0; i < numRows; ++i) {
-        int y = i * rowHeight;
+        double y = i * rowHeight + rowHeight;
         
         p.setPen(ThemeManager::instance().gridLineSubColor());
-        p.drawLine(0, y + rowHeight, widgetWidth, y + rowHeight);
+        p.drawLine(QPointF(0, y), QPointF(widgetWidth, y));
     }
     
     // Clips
@@ -112,9 +112,9 @@ void ArrangementGridWidget::paintEvent(QPaintEvent *event)
     }
     
     // Playhead
-    int playheadX = static_cast<int>(m_playheadPosition * pixelsPerTick());
+    double playheadX = m_playheadPosition * pixelsPerTick();
     p.setPen(QPen(QColor("#FF3366"), 2));
-    p.drawLine(playheadX, 0, playheadX, widgetHeight);
+    p.drawLine(QPointF(playheadX, 0), QPointF(playheadX, widgetHeight));
 
     // ラバーバンド範囲選択の描画
     if (m_isRubberBanding && m_rubberBandRect.isValid()) {
@@ -154,17 +154,17 @@ void ArrangementGridWidget::drawClips(QPainter& p)
             }
             if (isWaveRevealing) continue;
 
-            int x = static_cast<int>(clip->startTick() * pixelsPerTick());
-            int w = static_cast<int>(clip->durationTicks() * pixelsPerTick());
+            double x = clip->startTick() * pixelsPerTick();
+            double w = clip->durationTicks() * pixelsPerTick();
             
             // ドラッグ中のクリップは移動先トラックの位置に描画
-            int drawY = y;
+            double drawY = y;
             if (m_isDragging && clip->id() == m_selectedClipId 
                 && m_dragCurrentTrackIndex >= 0 && m_dragCurrentTrackIndex != i) {
                 drawY = m_dragCurrentTrackIndex * rowHeight;
             }
             
-            QRect clipRect(x, drawY + 10, w, rowHeight - 20);
+            QRectF clipRect(x, drawY + 10, w, rowHeight - 20);
             
             // アニメーション状態を取得
             float animScale = 1.0f;
@@ -206,17 +206,19 @@ void ArrangementGridWidget::drawClips(QPainter& p)
                 p.setRenderHint(QPainter::Antialiasing, true);
                 QColor glow = trackColor;
                 glow.setAlphaF(glowIntensity * 0.4f);
-                int expand = static_cast<int>(4 * glowIntensity);
-                QRect glowRect = clipRect.adjusted(-expand, -expand, expand, expand);
+                double expand = 4.0 * glowIntensity;
+                QRectF glowRect = clipRect.adjusted(-expand, -expand, expand, expand);
                 p.setPen(Qt::NoPen);
                 p.setBrush(glow);
                 p.drawRoundedRect(glowRect, 6, 6);
                 p.setRenderHint(QPainter::Antialiasing, false);
             }
 
+            p.setRenderHint(QPainter::Antialiasing, true);
             p.setBrush(fillColor);
             p.setPen(QPen(borderColor, isSelected ? 2 : 1));
             p.drawRoundedRect(clipRect, 4, 4);
+            p.setRenderHint(QPainter::Antialiasing, false);
             
             // クリップ内のコンテンツ描画（MIDIノート or オーディオ波形）
             if (clip->isAudioClip()) {
@@ -224,10 +226,10 @@ void ArrangementGridWidget::drawClips(QPainter& p)
                 QColor waveColor = isSelected ? QColor(255, 255, 255, 200) : trackColor.darker(120);
                 drawAudioWaveform(p, clipRect, clip, waveColor);
             } else if (!clip->notes().isEmpty()) {
-                int clipH = clipRect.height() - 4;
-                int clipW = clipRect.width() - 4;
-                int clipX = clipRect.x() + 2;
-                int clipY = clipRect.y() + 2;
+                double clipH = clipRect.height() - 4;
+                double clipW = clipRect.width() - 4;
+                double clipX = clipRect.x() + 2;
+                double clipY = clipRect.y() + 2;
                 
                 QColor noteColor = isSelected ? QColor(255, 255, 255, 200) : trackColor.darker(120);
                 p.setPen(Qt::NoPen);
@@ -238,21 +240,22 @@ void ArrangementGridWidget::drawClips(QPainter& p)
 
                 // クリップ領域にクリッピングして、はみ出しノートを描画させない
                 p.save();
-                p.setClipRect(QRect(clipX, clipY, clipW, clipH));
+                p.setClipRect(QRectF(clipX, clipY, clipW, clipH).toAlignedRect());
+                p.setRenderHint(QPainter::Antialiasing, true);
                 
                 for (Note* note : clip->notes()) {
                     // 絶対位置ベースで描画（比例ではなく tick→pixel 変換）
-                    int noteX = clipX + static_cast<int>(note->startTick() * pixelsPerTick());
-                    int noteW = qMax(2, static_cast<int>(note->durationTicks() * pixelsPerTick()));
+                    double noteX = clipX + note->startTick() * pixelsPerTick();
+                    double noteW = qMax(2.0, note->durationTicks() * pixelsPerTick());
 
                     // クリップ範囲外のノートはスキップ
                     if (noteX >= clipX + clipW || noteX + noteW <= clipX) continue;
                     
                     double pitchRatio = 1.0 - (static_cast<double>(note->pitch()) / 127.0);
-                    int noteH = qMax(2, clipH / 16);
-                    int noteY = clipY + static_cast<int>(pitchRatio * (clipH - noteH));
+                    double noteH = qMax(2.0, clipH / 16.0);
+                    double noteY = clipY + pitchRatio * (clipH - noteH);
                     
-                    p.drawRect(noteX, noteY, noteW, noteH);
+                    p.drawRect(QRectF(noteX, noteY, noteW, noteH));
                 }
 
                 p.restore();
@@ -283,10 +286,10 @@ void ArrangementGridWidget::drawClips(QPainter& p)
         int trackIdx = visibleTrackIndex(track);
         if (trackIdx < 0) continue;
 
-        int x = static_cast<int>(clip->startTick() * pixelsPerTick());
-        int w = static_cast<int>(clip->durationTicks() * pixelsPerTick());
-        int y = trackIdx * rowHeight;
-        QRect clipRect(x, y + 10, w, rowHeight - 20);
+        double x = clip->startTick() * pixelsPerTick();
+        double w = clip->durationTicks() * pixelsPerTick();
+        double y = trackIdx * rowHeight;
+        QRectF clipRect(x, y + 10, w, rowHeight - 20);
 
         float opacity = 0.5f; // デフォルト
         if (m_clipAnims.contains(clipId)) {
@@ -297,11 +300,13 @@ void ArrangementGridWidget::drawClips(QPainter& p)
         }
 
         p.save();
+        p.setRenderHint(QPainter::Antialiasing, true);
         p.setOpacity(opacity);
         QColor trackColor = track->color();
         p.setBrush(trackColor.lighter(140));
         p.setPen(QPen(trackColor, 1));
         p.drawRoundedRect(clipRect, 4, 4);
+        p.setRenderHint(QPainter::Antialiasing, false);
 
         // クリップ内ノートの簡易描画（フェードアウト版）
         if (!clip->notes().isEmpty()) {
@@ -309,20 +314,21 @@ void ArrangementGridWidget::drawClips(QPainter& p)
             noteColor.setAlpha(150);
             p.setPen(Qt::NoPen);
             p.setBrush(noteColor);
-            int clipDrawX = clipRect.x() + 2;
-            int clipDrawY = clipRect.y() + 2;
-            int clipW = clipRect.width() - 4;
-            int clipH = clipRect.height() - 4;
+            double clipDrawX = clipRect.x() + 2;
+            double clipDrawY = clipRect.y() + 2;
+            double clipW = clipRect.width() - 4;
+            double clipH = clipRect.height() - 4;
             qint64 clipDuration = clip->durationTicks();
             if (clipDuration > 0) {
-                p.setClipRect(clipRect.adjusted(2,2,-2,-2));
+                p.setClipRect(clipRect.adjusted(2,2,-2,-2).toAlignedRect());
+                p.setRenderHint(QPainter::Antialiasing, true);
                 for (Note* note : clip->notes()) {
-                    int noteX = clipDrawX + static_cast<int>(note->startTick() * pixelsPerTick());
-                    int noteW = qMax(2, static_cast<int>(note->durationTicks() * pixelsPerTick()));
+                    double noteX = clipDrawX + note->startTick() * pixelsPerTick();
+                    double noteW = qMax(2.0, note->durationTicks() * pixelsPerTick());
                     double pitchRatio = 1.0 - (static_cast<double>(note->pitch()) / 127.0);
-                    int noteH = qMax(2, clipH / 16);
-                    int noteY = clipDrawY + static_cast<int>(pitchRatio * (clipH - noteH));
-                    p.drawRect(noteX, noteY, noteW, noteH);
+                    double noteH = qMax(2.0, clipH / 16.0);
+                    double noteY = clipDrawY + pitchRatio * (clipH - noteH);
+                    p.drawRect(QRectF(noteX, noteY, noteW, noteH));
                 }
             }
         }
@@ -352,29 +358,33 @@ void ArrangementGridWidget::drawFolderSummary(QPainter& p, Track* folder, int y,
     if (!hasAnyClip) return;
 
     // 統合クリップの矩形
-    int clipX = static_cast<int>(minTick * pixelsPerTick());
-    int clipW = qMax(4, static_cast<int>((maxTick - minTick) * pixelsPerTick()));
-    int clipTop = y + 10;
-    int clipH = rowHeight - 20;
-    QRect clipRect(clipX, clipTop, clipW, clipH);
+    double clipX = minTick * pixelsPerTick();
+    double clipW = qMax(4.0, (maxTick - minTick) * pixelsPerTick());
+    double clipTop = y + 10.0;
+    double clipH = rowHeight - 20.0;
+    QRectF clipRect(clipX, clipTop, clipW, clipH);
 
     // フォルダカラーで統合クリップ背景を描画
     QColor folderColor = folder->color();
     QColor fillColor = folderColor.lighter(150);
     fillColor.setAlpha(120);
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
     p.setPen(QPen(folderColor, 1));
     p.setBrush(fillColor);
     p.drawRoundedRect(clipRect, 4, 4);
 
     // クリップ内にノートをまとめて描画（各子トラックの色で）
-    int innerX = clipRect.x() + 2;
-    int innerW = clipRect.width() - 4;
-    int innerY = clipRect.y() + 2;
-    int innerH = clipRect.height() - 4;
-    if (innerH < 2 || innerW < 2) return;
+    double innerX = clipRect.x() + 2.0;
+    double innerW = clipRect.width() - 4.0;
+    double innerY = clipRect.y() + 2.0;
+    double innerH = clipRect.height() - 4.0;
+    if (innerH < 2.0 || innerW < 2.0) {
+        p.restore();
+        return;
+    }
 
-    p.save();
-    p.setClipRect(QRect(innerX, innerY, innerW, innerH));
+    p.setClipRect(QRectF(innerX, innerY, innerW, innerH).toAlignedRect());
     p.setPen(Qt::NoPen);
 
     for (Track* child : children) {
@@ -384,15 +394,15 @@ void ArrangementGridWidget::drawFolderSummary(QPainter& p, Track* folder, int y,
 
         for (Clip* clip : child->clips()) {
             for (Note* note : clip->notes()) {
-                int noteX = innerX + static_cast<int>((clip->startTick() + note->startTick()) * pixelsPerTick()) - clipX;
-                int noteW = qMax(1, static_cast<int>(note->durationTicks() * pixelsPerTick()));
+                double noteX = innerX + (clip->startTick() + note->startTick()) * pixelsPerTick() - clipX;
+                double noteW = qMax(1.0, note->durationTicks() * pixelsPerTick());
                 if (noteX >= innerX + innerW || noteX + noteW <= innerX) continue;
 
                 double pitchRatio = 1.0 - (static_cast<double>(note->pitch()) / 127.0);
-                int noteH = qMax(2, innerH / 16);
-                int noteY = innerY + static_cast<int>(pitchRatio * (innerH - noteH));
+                double noteH = qMax(2.0, innerH / 16.0);
+                double noteY = innerY + pitchRatio * (innerH - noteH);
 
-                p.drawRect(noteX, noteY, noteW, noteH);
+                p.drawRect(QRectF(noteX, noteY, noteW, noteH));
             }
         }
     }
@@ -400,7 +410,7 @@ void ArrangementGridWidget::drawFolderSummary(QPainter& p, Track* folder, int y,
     p.restore();
 }
 
-void ArrangementGridWidget::drawAudioWaveform(QPainter& p, const QRect& clipRect,
+void ArrangementGridWidget::drawAudioWaveform(QPainter& p, const QRectF& clipRect,
                                                Clip* clip, const QColor& waveColor)
 {
     if (!clip || !clip->isAudioClip()) return;
@@ -408,33 +418,36 @@ void ArrangementGridWidget::drawAudioWaveform(QPainter& p, const QRect& clipRect
     const QVector<float>& preview = clip->waveformPreview();
     if (preview.isEmpty()) return;
 
-    int clipX = clipRect.x() + 2;
-    int clipW = clipRect.width() - 4;
-    int clipY = clipRect.y() + 2;
-    int clipH = clipRect.height() - 4;
+    double clipX = clipRect.x() + 2.0;
+    double clipW = clipRect.width() - 4.0;
+    double clipY = clipRect.y() + 2.0;
+    double clipH = clipRect.height() - 4.0;
     if (clipW <= 0 || clipH <= 0) return;
 
-    int centerY = clipY + clipH / 2;
-    int halfHeight = clipH / 2;
+    double centerY = clipY + clipH / 2.0;
+    double halfHeight = clipH / 2.0;
 
     p.save();
-    p.setClipRect(QRect(clipX, clipY, clipW, clipH));
+    p.setClipRect(QRectF(clipX, clipY, clipW, clipH).toAlignedRect());
+    p.setRenderHint(QPainter::Antialiasing, true);
     p.setPen(Qt::NoPen);
     p.setBrush(waveColor);
 
     // プレビューデータからクリップ幅に合わせて描画
     int previewSize = preview.size();
-    for (int px = 0; px < clipW; ++px) {
+    // 描画する棒の数は幅から決定
+    int steps = static_cast<int>(clipW);
+    for (int px = 0; px < steps; ++px) {
         // ピクセル位置 → プレビューインデックス
-        int idx = static_cast<int>(static_cast<qint64>(px) * previewSize / clipW);
+        int idx = static_cast<int>(static_cast<qint64>(px) * previewSize / steps);
         idx = qBound(0, idx, previewSize - 1);
 
         float peak = preview[idx];
-        int barH = static_cast<int>(peak * halfHeight);
-        if (barH < 1) barH = 1;
+        double barH = peak * halfHeight;
+        if (barH < 1.0) barH = 1.0;
 
         // 中央から上下対称に描画
-        p.drawRect(clipX + px, centerY - barH, 1, barH * 2);
+        p.drawRect(QRectF(clipX + px, centerY - barH, 1.0, barH * 2.0));
     }
 
     p.restore();
