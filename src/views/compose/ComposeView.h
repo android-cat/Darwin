@@ -72,6 +72,7 @@ private:
     // ページ1: プラグイン未設定トラック選択時
     QWidget* m_pluginSelectorPanel;
     QLabel* m_selectorTrackLabel;
+    QLabel* m_selectorTitle;         ///< "VST3 INSTRUMENTS" タイトルラベル
     QListWidget* m_pluginListWidget;
     QPushButton* m_loadPluginBtn;
     QPushButton* m_rescanBtn;

@@ -4,8 +4,6 @@
 #include <QFile>
 #include <QStandardPaths>
 #include <QDebug>
-#include <QtConcurrent/QtConcurrent>
-#include <QFuture>
 #include <QLibrary>
 #include <QFileInfo>
 
@@ -72,27 +70,20 @@ void VST3Scanner::setScanPaths(const QStringList& paths)
 
 QVector<VST3PluginInfo> VST3Scanner::scan(bool instrumentsOnly)
 {
-    qDebug() << "Starting parallel VST3 scan (SDK-based)...";
-    
-    QStringList dirsToScan;
-    for (const QString& path : m_scanPaths) {
-        if (QDir(path).exists()) dirsToScan.append(path);
-    }
-    
-    QFuture<QVector<VST3PluginInfo>> future = QtConcurrent::mapped(dirsToScan, 
-        [this](const QString& dir) {
-            return this->scanDirectory(dir);
-        }
-    );
-    
-    future.waitForFinished();
-    
+    qDebug() << "VST3スキャン開始...";
+
+    // ネストしたQtConcurrentはスレッドプール枚渇が原因でクラッシュするため、
+    // 呼び出し元のQtConcurrent::run一段だけに統一しシリアルスキャンする。
+    // スキャン自体はI/Oバウンドなので、並列化による常用な速度差はない。
     QVector<VST3PluginInfo> allPlugins;
-    QList<QVector<VST3PluginInfo>> results = future.results();
-    for (const auto& result : results) allPlugins.append(result);
-    
-    qDebug() << "Scan complete. Found" << allPlugins.size() << "plugins.";
-    
+    for (const QString& path : m_scanPaths) {
+        if (QDir(path).exists()) {
+            allPlugins.append(scanDirectory(path));
+        }
+    }
+
+    qDebug() << "VST3スキャン完了。" << allPlugins.size() << "件検出。";
+
     if (instrumentsOnly) {
         QVector<VST3PluginInfo> instruments;
         for (const auto& plugin : allPlugins) {
@@ -103,7 +94,7 @@ QVector<VST3PluginInfo> VST3Scanner::scan(bool instrumentsOnly)
         emit scanComplete(instruments.size());
         return instruments;
     }
-    
+
     emit scanComplete(allPlugins.size());
     return allPlugins;
 }
@@ -193,7 +184,7 @@ VST3PluginInfo VST3Scanner::parseVST3Bundle(const QString& path)
                 info.vendor = QString::fromUtf8(factoryInfo.vendor);
             }
             
-            // Check Classes
+            // クラス情報の確認
             FUnknownPtr<IPluginFactory2> factory2(factory);
             if (factory2) {
                 int32 classCount = factory2->countClasses();
@@ -209,7 +200,7 @@ VST3PluginInfo VST3Scanner::parseVST3Bundle(const QString& path)
                             info.version = version;
                         }
 
-                        // Check main category or subCategories
+                        // カテゴリ判定
                         bool isInst = false;
                         if (category.contains("Instrument", Qt::CaseInsensitive) || subCategories.contains("Instrument", Qt::CaseInsensitive)) {
                             isInst = true;
@@ -221,25 +212,24 @@ VST3PluginInfo VST3Scanner::parseVST3Bundle(const QString& path)
                              isInst = true;
                              info.category = "Instrument";
                         }
-                        
+
                         if (isInst) {
                             info.isInstrument = true;
                         }
 
-                        // Check effects
+                        // エフェクト判定
                         if (category.contains("Fx", Qt::CaseInsensitive) || subCategories.contains("Fx", Qt::CaseInsensitive)) {
                             info.isEffect = true;
                             if (info.category.isEmpty()) info.category = "Fx";
                         }
-                        
-                        // Treat as effect if it's not an instrument as a fallback
+
+                        // インストルメント・エフェクトどちらでもない場合のフォールバック
                         if (!info.isInstrument && !info.isEffect) {
                             info.isEffect = true;
                         }
-                        
-                        // If we found a relevant class, update name from it?
-                        if ((info.isInstrument || info.isEffect)) {
-                            QString trimmedName = name.trimmed();
+
+                        if (info.isInstrument || info.isEffect) {
+                            const QString trimmedName = name.trimmed();
                             if (!trimmedName.isEmpty()) {
                                 info.name = trimmedName;
                             }
@@ -248,9 +238,13 @@ VST3PluginInfo VST3Scanner::parseVST3Bundle(const QString& path)
                     }
                 }
             }
+            // VST3のCOMライクな参照カウントを解放。
+            // これを忝れると、その後のlib.unload()時に
+            // FUnknownPtrのデストラクタが解放済メモリを参照しクラッシュする。
+            factory->release();
         }
     }
-    
+
     lib.unload();
     return info;
 }

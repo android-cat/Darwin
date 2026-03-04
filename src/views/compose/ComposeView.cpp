@@ -32,6 +32,7 @@ ComposeView::ComposeView(QWidget *parent)
     , m_pluginSelectorPanel(nullptr)
     , m_selectorTrackLabel(nullptr)
     , m_pluginListWidget(nullptr)
+    , m_selectorTitle(nullptr)
     , m_loadPluginBtn(nullptr)
     , m_rescanBtn(nullptr)
     , m_scanStatusLabel(nullptr)
@@ -45,6 +46,8 @@ ComposeView::ComposeView(QWidget *parent)
     setupUi();
     connect(&Darwin::ThemeManager::instance(), &Darwin::ThemeManager::themeChanged,
             this, &ComposeView::applyTheme);
+    // 初回テーマ適用（起動時のモードに合わせてスタイルを確定させる）
+    applyTheme();
 }
 
 void ComposeView::setProject(Project* project)
@@ -150,8 +153,8 @@ void ComposeView::setupUi()
     m_selectorTrackLabel->setStyleSheet("font-size: 13px; font-weight: 600; color: #e2e8f0;");
 
     // プラグインリストタイトル & スキャン行
-    QLabel *selectorTitle = new QLabel("VST3 INSTRUMENTS", m_pluginSelectorPanel);
-    selectorTitle->setStyleSheet(
+    m_selectorTitle = new QLabel("VST3 INSTRUMENTS", m_pluginSelectorPanel);
+    m_selectorTitle->setStyleSheet(
         "font-size: 9px; font-weight: bold; color: #94a3b8; letter-spacing: 1px;");
 
     QHBoxLayout *scanRow = new QHBoxLayout();
@@ -208,7 +211,7 @@ void ComposeView::setupUi()
     connect(m_loadPluginBtn, &QPushButton::clicked, this, &ComposeView::onLoadPluginClicked);
 
     selectorLayout->addWidget(m_selectorTrackLabel);
-    selectorLayout->addWidget(selectorTitle);
+    selectorLayout->addWidget(m_selectorTitle);
     selectorLayout->addLayout(scanRow);
     selectorLayout->addWidget(m_pluginListWidget, 1);
     selectorLayout->addWidget(m_loadPluginBtn);
@@ -341,6 +344,20 @@ void ComposeView::applyTheme()
             #composeAssignBtn:disabled { background-color: %3; color: %4; }
         )").arg(btnBg, text, disabledBg, textSec));
     }
+
+    // ページ1: スキャン画面の追加ウィジェット
+    if (m_selectorTitle)
+        m_selectorTitle->setStyleSheet(
+            QString("font-size: 9px; font-weight: bold; color: %1; letter-spacing: 1px;").arg(textSec));
+    if (m_rescanBtn)
+        m_rescanBtn->setStyleSheet(QString(R"(
+            #composeScanBtn {
+                border: none; background-color: transparent; color: %1;
+                font-size: 10px; font-weight: bold; padding: 0px 4px;
+            }
+            #composeScanBtn:hover { color: #FF3366; }
+            #composeScanBtn:disabled { color: %2; }
+        )").arg(textSec, isDark ? QString("#cbd5e1") : QString("#94a3b8")));
 
     // ページ2: エディタヘッダーバー
     if (m_editorHeaderBar)
