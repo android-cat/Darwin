@@ -167,13 +167,20 @@ void PlaybackController::suspendForExport()
 
 void PlaybackController::resumeFromExport()
 {
-    // AudioEngine を再開
-    if (!m_audioEngine->isRunning()) {
-        m_audioEngine->start();
-    }
-    // UIタイマーを再開（ensurePluginsPrepared が自然にサンプルレートを復帰させる）
-    m_uiTimer->start();
-    qDebug() << "PlaybackController: エクスポートから復帰";
+    // ダイアログ類が完全に閉じ、UIイベントループが落ち着いた後にプラグインとAudioEngineを復旧させる
+    // これにより、COMのマーシャリングやメッセージキューの詰まりによるデッドロックを防ぐ
+    QTimer::singleShot(50, this, [this]() {
+        // AudioEngineを再開する前に、プラグインの状態（サンプルレート等）を安全に復元する
+        ensurePluginsPrepared();
+
+        // AudioEngine を再開
+        if (!m_audioEngine->isRunning()) {
+            m_audioEngine->start();
+        }
+        // UIタイマーを再開
+        m_uiTimer->start();
+        qDebug() << "PlaybackController: エクスポートから復帰";
+    });
 }
 
 void PlaybackController::onUiTimerTick()
@@ -223,8 +230,9 @@ void PlaybackController::onUiTimerTick()
         
         if (requiresRestart) {
             qDebug() << "PlaybackController: Plugin restart required from track:" << track->name();
-            // リスタート要求を検出 → 先頭に戻す
-            seekTo(0);
+            // リスタート要求で強制的に先頭に戻すのは、UIスレッドをブロックする危険があるため行わない
+            // VSTパラメータ名等のGUI更新要求はフラグ消費で完了とする
+            // seekTo(0);
             break;
         }
     }
@@ -658,7 +666,7 @@ void PlaybackController::audioRenderCallback(float* outputBuffer, int numFrames,
 
 void PlaybackController::ensurePluginsPrepared()
 {
-    if (!m_project || !m_audioEngine->isRunning()) return;
+    if (!m_project) return;
 
     double sr = m_audioEngine->sampleRate();
     int blockSize = m_audioEngine->bufferSize();
@@ -678,8 +686,9 @@ void PlaybackController::ensureTrackPluginsPrepared(Track* track, double sr, int
 {
     if (!track) return;
 
-    // プラグインの追加/削除中はスキップ
-    QMutexLocker lock(&track->pluginMutex());
+    // プラグインの追加/削除・オーディオ処理との競合を避けるためtryLockを使用
+    // （デッドロック防止：AudioスレッドがVST側のUIメッセージ待ちになっている時にブロックしないように）
+    if (!track->pluginMutex().tryLock()) return;
     
     // インストゥルメントプラグイン
     if (track->hasPlugin() && track->pluginInstance()->isLoaded()) {
@@ -698,4 +707,6 @@ void PlaybackController::ensureTrackPluginsPrepared(Track* track, double sr, int
             }
         }
     }
+    
+    track->pluginMutex().unlock();
 }

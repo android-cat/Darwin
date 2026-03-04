@@ -168,8 +168,8 @@ bool AudioEngine::start()
 
     // レンダリングスレッドを開始
     m_thread = QThread::create([this]() { renderThread(); });
-    m_thread->setPriority(QThread::TimeCriticalPriority);
     m_thread->start();
+    m_thread->setPriority(QThread::TimeCriticalPriority);
 
     qDebug() << "AudioEngine: レンダリング開始";
     return true;
@@ -191,7 +191,12 @@ void AudioEngine::stop()
     }
 
     if (m_thread) {
-        m_thread->wait(2000);
+        // メインスレッドから呼ばれた場合、2秒のwaitはメッセージループをブロックしてデッドロックの原因になる
+        // 短い時間だけ待機し、それでも終わらなければ強制終了またはクリーンアップに移る
+        if (!m_thread->wait(100)) {
+            qWarning() << "AudioEngine: レンダリングスレッドの終了待機がタイムアウトしました";
+            // スレッドが固まっている場合はそのままにしておく（強制終了はクラッシュの元）
+        }
         delete m_thread;
         m_thread = nullptr;
     }

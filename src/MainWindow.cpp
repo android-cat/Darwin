@@ -834,7 +834,7 @@ void MainWindow::exportAudio()
         filePath += ".wav";
     }
 
-    // 進捗ダイアログ
+    // 進捗ダイアログをヒープに確保
     QString rangeInfo;
     if (m_project->exportStartBar() >= 0 && m_project->exportEndBar() > m_project->exportStartBar()) {
         rangeInfo = QString("小節 %1 〜 %2 をエクスポート中...")
@@ -843,33 +843,56 @@ void MainWindow::exportAudio()
     } else {
         rangeInfo = "オーディオをエクスポート中...";
     }
-    QProgressDialog progressDlg(rangeInfo, "キャンセル", 0, 100, this);
-    progressDlg.setWindowModality(Qt::WindowModal);
-    progressDlg.setMinimumDuration(0);
-    progressDlg.setValue(0);
+    
+    auto* progressDlg = new QProgressDialog(rangeInfo, "キャンセル", 0, 100, this);
+    progressDlg->setWindowModality(Qt::WindowModal);
+    progressDlg->setMinimumDuration(0);
+    progressDlg->setValue(0);
+    progressDlg->setAttribute(Qt::WA_DeleteOnClose);
+    progressDlg->show();
 
     // エクスポート中はAudioEngine・タイマーを停止し、プラグインへの競合アクセスを防ぐ
     m_playbackController->suspendForExport();
 
-    AudioExporter exporter(this);
-    connect(&exporter, &AudioExporter::progressChanged, this, [&progressDlg](double progress) {
-        progressDlg.setValue(static_cast<int>(progress * 100));
+    auto* exporter = new AudioExporter(this);
+    connect(exporter, &AudioExporter::progressChanged, this, [progressDlg](double progress) {
+        if (progressDlg && !progressDlg->wasCanceled()) {
+            progressDlg->setValue(static_cast<int>(progress * 100));
+        }
     });
 
-    bool success = exporter.exportToWav(m_project, filePath, 44100, 24);
+    // バックグラウンドでエクスポートを実行
+    auto* watcher = new QFutureWatcher<bool>(this);
+    connect(watcher, &QFutureWatcher<bool>::finished, this, [this, watcher, exporter, progressDlg, filePath]() {
+        bool success = watcher->result();
+        
+        watcher->deleteLater();
+        exporter->deleteLater();
+        
+        if (progressDlg) {
+            progressDlg->reset(); // reset() closes the dialog based on its properties
+        }
 
-    progressDlg.close();
+        // デッドロック回避: AudioEngine・タイマーの再開前に完了メッセージを表示する
+        // （ダイアログのイベントループ中にプラグイン処理が走らないようにする）
+        if (success) {
+            QMessageBox::information(this, "エクスポート完了",
+                QString("オーディオファイルをエクスポートしました:\n%1").arg(filePath));
+        } else {
+            QMessageBox::warning(this, "エクスポートエラー",
+                "オーディオのエクスポートに失敗しました。");
+        }
 
-    // AudioEngine・タイマーを復帰（ensurePluginsPreparedが元のサンプルレートに戻す）
-    m_playbackController->resumeFromExport();
+        // MessageBoxが閉じられた後、安全な状態でAudioEngine・タイマーを復帰
+        // （ダイアログを閉じた直後の描画更新イベントなどを先に処理しておく）
+        QCoreApplication::processEvents();
+        m_playbackController->resumeFromExport();
+    });
 
-    if (success) {
-        QMessageBox::information(this, "エクスポート完了",
-            QString("オーディオファイルをエクスポートしました:\n%1").arg(filePath));
-    } else {
-        QMessageBox::warning(this, "エクスポートエラー",
-            "オーディオのエクスポートに失敗しました。");
-    }
+    Project* proj = m_project;
+    watcher->setFuture(QtConcurrent::run([exporter, proj, filePath]() -> bool {
+        return exporter->exportToWav(proj, filePath, 44100, 24);
+    }));
 }
 
 // ===============================================================
