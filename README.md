@@ -20,7 +20,7 @@ Qt6/C++ で構築されたオープンソースのデジタルオーディオワ
 | 項目 | 要件 |
 |------|------|
 | OS | Windows 10/11 (64-bit) |
-| Qt | 6.x (Widgets, Concurrent, Svg) |
+| Qt | 6.10.2 (Widgets, Concurrent, Svg) |
 | CMake | 3.16 以上 |
 | コンパイラ | MSVC 2019 以上（C++17） |
 | VST3 SDK | ビルド時に自動ダウンロード |

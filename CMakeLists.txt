@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Darwin VERSION 1.0.4 LANGUAGES CXX)
+project(Darwin VERSION 1.0.5 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -204,6 +204,14 @@ target_link_libraries(Darwin PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concur
 # Windows必須ライブラリ
 if(WIN32)
     target_link_libraries(Darwin PRIVATE ole32 uuid avrt mfplat mfreadwrite mfuuid propsys shlwapi)
+    # _WIN32_WINNT / NTDDI_VERSION: FOLDERID_* 等 Vista 以降の API を有効化
+    #   0x0A00 = Windows 10, NTDDI_WIN10 = 0x0A000000
+    # WASAPI GUID は AudioEngine.cpp 内で __uuidof() を使用しているため INITGUID 不要。
+    target_compile_definitions(Darwin PRIVATE
+        _WIN32_WINNT=0x0A00
+        NTDDI_VERSION=0x0A000000
+        WINVER=0x0A00
+    )
 endif()
 
 

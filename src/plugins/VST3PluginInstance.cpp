@@ -507,6 +507,12 @@ bool VST3PluginInstance::prepareAudio(double sampleRate, int maxBlockSize)
         return false;
     }
 
+    // 同一サンプルレート・ブロックサイズで既に準備済みであれば再初期化をスキップ
+    // （Kontakt等は setActive(false)→setupProcessing でサンプルレート変更ダイアログを出すため）
+    if (m_audioPrepared && m_currentSampleRate == sampleRate && m_maxBlockSize == maxBlockSize) {
+        return true;
+    }
+
     auto component = m_plugProvider->getComponent();
     if (!component) return false;
 

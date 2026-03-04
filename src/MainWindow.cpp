@@ -8,6 +8,7 @@
 #include "Project.h"
 #include "Track.h"
 #include "PlaybackController.h"
+#include "AudioEngine.h"
 #include "ArrangementGridWidget.h"
 #include "PianoRollGridWidget.h"
 #include "commands/UndoCommands.h"
@@ -869,6 +870,14 @@ void MainWindow::exportAudio()
     // エクスポート中はAudioEngine・タイマーを停止し、プラグインへの競合アクセスを防ぐ
     m_playbackController->suspendForExport();
 
+    // デバイスのネイティブサンプルレートを使用してプラグインの再初期化を回避する
+    // （44100固定にするとKontakt等が「サンプルレートが変わった」ダイアログを表示する）
+    double exportSampleRate = 44100.0;
+    if (m_playbackController && m_playbackController->audioEngine()) {
+        double deviceRate = m_playbackController->audioEngine()->sampleRate();
+        if (deviceRate > 0) exportSampleRate = deviceRate;
+    }
+
     auto* exporter = new AudioExporter(this);
     connect(exporter, &AudioExporter::progressChanged, this, [progressDlg](double progress) {
         if (progressDlg) {
@@ -905,8 +914,8 @@ void MainWindow::exportAudio()
     });
 
     Project* proj = m_project;
-    watcher->setFuture(QtConcurrent::run([exporter, proj, filePath]() -> bool {
-        return exporter->exportToWav(proj, filePath, 44100, 24);
+    watcher->setFuture(QtConcurrent::run([exporter, proj, filePath, exportSampleRate]() -> bool {
+        return exporter->exportToWav(proj, filePath, exportSampleRate, 24);
     }));
 }
 

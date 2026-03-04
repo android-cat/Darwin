@@ -212,17 +212,21 @@ void ClassName::setName(const QString& name)
 
 - オーディオレンダリングコールバック内では **メモリアロケーション禁止**（`new`, `malloc`, `QList::append` 等）
 - スレッド間共有変数には `std::atomic` を使用
-- COM インターフェースはヘッダーではなく `.cpp` にのみ `#include` する（MinGW GUID重複回避）
-- WASAPI/COM ヘッダーをインクルードする場合は `#include <initguid.h>` を先頭に置く
+- COM インターフェースはヘッダーではなく `.cpp` にのみ `#include` する
+- WASAPI GUID は `__uuidof()` を使用する（MSVC 組み込み。`INITGUID` / `IID_*` / `CLSID_*` マクロ不要）
 
 ```cpp
-// Good - AudioEngine.cpp
-#include <initguid.h>      // GUID定義生成（MinGW対応）
+// Good - AudioEngine.cpp（MSVC / __uuidof を使用）
 #include <mmdeviceapi.h>
 #include <audioclient.h>
 
-// Bad - ヘッダーでCOMインターフェースをinclude
-// #include <mmdeviceapi.h>  // GUIDリンクエラーの原因
+hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                      __uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&enumerator));
+
+// Bad - INITGUID マクロを使うと他の翻訳単位で FOLDERID_* が未宣言になる
+// #define INITGUID
+// #include <initguid.h>
+// hr = CoCreateInstance(CLSID_MMDeviceEnumerator, ...);
 ```
 
 ## 3. Qt固有の規約

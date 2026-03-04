@@ -2,8 +2,6 @@
 #include <QDebug>
 
 #ifdef Q_OS_WIN
-// MinGWではGUID定義が自動的にリンクされないため、ここで生成する
-#include <initguid.h>
 #include <mmdeviceapi.h>
 #include <audioclient.h>
 #include <Functiondiscoverykeys_devpkey.h>
@@ -29,8 +27,8 @@ bool AudioEngine::initialize()
     HRESULT hr;
 
     // デバイス列挙子を作成
-    hr = CoCreateInstance(CLSID_MMDeviceEnumerator, nullptr, CLSCTX_ALL,
-                          IID_IMMDeviceEnumerator, reinterpret_cast<void**>(&m_enumerator));
+    hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                          __uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&m_enumerator));
     if (FAILED(hr)) {
         qWarning() << "AudioEngine: デバイス列挙子の作成に失敗:" << hr;
         return false;
@@ -45,7 +43,7 @@ bool AudioEngine::initialize()
     }
 
     // IAudioClientを取得
-    hr = m_device->Activate(IID_IAudioClient, CLSCTX_ALL, nullptr,
+    hr = m_device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
                             reinterpret_cast<void**>(&m_audioClient));
     if (FAILED(hr)) {
         qWarning() << "AudioEngine: IAudioClientのアクティベートに失敗:" << hr;
@@ -121,7 +119,7 @@ bool AudioEngine::initialize()
     m_bufferSize = static_cast<int>(bufferFrames);
 
     // IAudioRenderClientを取得
-    hr = m_audioClient->GetService(IID_IAudioRenderClient,
+    hr = m_audioClient->GetService(__uuidof(IAudioRenderClient),
                                    reinterpret_cast<void**>(&m_renderClient));
     if (FAILED(hr)) {
         qWarning() << "AudioEngine: IAudioRenderClientの取得に失敗:" << hr;

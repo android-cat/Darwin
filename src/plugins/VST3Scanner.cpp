@@ -49,15 +49,21 @@ using namespace Steinberg::Vst;
 // MSVC: SEH 保護付きローダー
 // ──────────────────────────────────────────
 
-/** DLL から抽出したプラグイン生情報 (POD 型のみ — SEH 制約) */
+/** DLL から抽出したプラグイン生情報
+ *  POD 型のみ — MSVC C2712 制約:
+ *  __try を持つ関数内では非 trivial デストラクタを持つオブジェクトを
+ *  一切（一時変数含む）使用できない。qWarning() も不可。
+ *  エラーはフラグで返し、呼び出し元でログ出力する。 */
 struct PluginRawInfo {
-    bool success     = false;
-    char name[256]   = {};
-    char vendor[256] = {};
-    char version[256]= {};
-    char category[64]= {};
-    bool isInstrument= false;
-    bool isEffect    = false;
+    bool success      = false;
+    bool loadFailed   = false;  ///< LoadLibraryExW が NULL を返した
+    bool sehCrashed   = false;  ///< __except で捕捉したハードウェア例外
+    char name[256]    = {};
+    char vendor[256]  = {};
+    char version[256] = {};
+    char category[64] = {};
+    bool isInstrument = false;
+    bool isEffect     = false;
 };
 
 /**
@@ -68,28 +74,25 @@ static PluginRawInfo extractPluginInfoSafe(const wchar_t* binPathW)
 {
     PluginRawInfo out;
 
-    // ─── OS エラーダイアログ抑制 ───
-    // 依存 DLL が見つからない場合などに Windows がモーダルダイアログを表示し、
-    // アプリケーションが無応答になるのを防ぐ。
+    // OS エラーダイアログ抑制:
+    // 依存 DLL が見つからない場合に Windows がモーダルダイアログを出して
+    // 無応答になるのを防ぐ。
     UINT prevErrorMode = SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
 
-    // ─── SEH 保護 ───
-    // LoadLibraryExW 自体を __try 内に入れることで、
-    // DllMain 内のクラッシュ（アクセス違反等）も捕捉する。
-    // C++ デストラクタを持つオブジェクトはこのブロック内では使用不可。
+    // LoadLibraryExW を含む全処理を __try で囲み、DllMain クラッシュも捕捉する。
+    // !! MSVC C2712 制約: この関数内では非 trivial デストラクタを持つオブジェクトを
+    //    一切使用禁止。QString / QDebug 一時変数（qWarning() を含む）も不可。
+    //    early return も out のコピーを生成するため除去し else {} 構造に変更。
     HMODULE hLib = nullptr;
-    bool sehCrashed = false;
 
     __try {
         // LOAD_WITH_ALTERED_SEARCH_PATH: DLL 依存関係を DLL と同じフォルダから優先解決
         hLib = LoadLibraryExW(binPathW, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
         if (!hLib) {
-            // SEH ではなくロード失敗 → __except には入らない
-            SetErrorMode(prevErrorMode);
-            qWarning() << "VST3スキャン: LoadLibrary 失敗 -"
-                       << QString::fromWCharArray(binPathW);
-            return out;
-        }
+            // 通常のロード失敗 (SEH 例外ではない → __except に入らない)
+            // qWarning() 使用不可のためフラグで呼び出し元に通知する
+            out.loadFailed = true;
+        } else {
 
         typedef IPluginFactory* (STDMETHODCALLTYPE *GetFactoryProc)();
         GetFactoryProc getFactory = reinterpret_cast<GetFactoryProc>(
@@ -169,16 +172,17 @@ static PluginRawInfo extractPluginInfoSafe(const wchar_t* binPathW)
         }
 
         // 正常完了: DLL を安全にアンロード
-        if (hLib) {
-            FreeLibrary(hLib);
-            hLib = nullptr;
-        }
+        // (ここは else { hLib != nullptr } ブロック内なので hLib のチェック不要)
+        FreeLibrary(hLib);
+        hLib = nullptr;
+
+        } // else (hLib != nullptr) の閉じ括弧
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        sehCrashed = true;
-        qWarning() << "VST3スキャン: プラグイン DLL がクラッシュしました。スキップします。"
-                   << QString::fromWCharArray(binPathW);
-        // SEH 例外後の FreeLibrary は二次クラッシュを引き起こす可能性が高いため、
-        // 意図的にアンロードしない。プロセス終了時に OS が回収する。
+        // qWarning() 使用不可 (QDebug 一時変数 = 非 trivial デストラクタ → C2712)
+        // フラグで呼び出し元に通知する
+        out.sehCrashed = true;
+        // SEH 例外後の FreeLibrary は二次クラッシュを招く危険があるため意図的にスキップ。
+        // プロセス終了時に OS が回収する。
     }
 
     SetErrorMode(prevErrorMode);
@@ -423,8 +427,16 @@ VST3PluginInfo VST3Scanner::parseVST3Bundle(const QString& path)
     const std::wstring binPathW = binPath.toStdWString();
     const PluginRawInfo raw = extractPluginInfoSafe(binPathW.c_str());
 
+    // extractPluginInfoSafe 内では qWarning() 使用不可のため、ここでログ出力する
+    if (raw.loadFailed) {
+        qWarning() << "VST3スキャン: DLL ロード失敗 -" << binPath;
+        return info;
+    }
+    if (raw.sehCrashed) {
+        qWarning() << "VST3スキャン: プラグイン DLL がクラッシュしました。スキップします -" << binPath;
+        return info;
+    }
     if (!raw.success) {
-        // ロード失敗またはクラッシュ検出: ファイル名だけ返す
         return info;
     }
 
