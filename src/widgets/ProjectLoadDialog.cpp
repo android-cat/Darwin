@@ -3,18 +3,13 @@
 #include <QPainterPath>
 #include <QApplication>
 #include <cmath>
+#include "common/ThemeManager.h"
 
 static float easeOutCubic(float t) { return 1.0f - std::pow(1.0f - t, 3.0f); }
 static float easeOutBack(float t) { const float c = 1.70158f; return 1.0f + (c+1)*std::pow(t-1,3) + c*std::pow(t-1,2); }
 
-// ── DAW カラーパレット (ダークテーマ) ──
-static const QColor kCardBg(37, 37, 38);           // #252526 panelBackground
-static const QColor kBorder(51, 65, 85);           // #334155 border
-static const QColor kTextPrimary(226, 232, 240);   // #e2e8f0 light text
-static const QColor kTextSecondary(148, 163, 184); // #94a3b8 secondary text
-static const QColor kAccent(255, 51, 102);          // #FF3366
-static const QColor kSuccess(34, 197, 94);           // green-500
-static const QColor kFailure(239, 68, 68);           // red-500
+// ── DAW カラーパレット (ThemeManager 経由) ──
+// 個別の色定数は廃止し、paintEvent 内で ThemeManager から直接取得します。
 
 ProjectLoadDialog::ProjectLoadDialog(const QString& projectName, QWidget* parent)
     : QDialog(parent, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint)
@@ -103,15 +98,25 @@ void ProjectLoadDialog::paintEvent(QPaintEvent*)
     // ── カード ──
     p.save();
     p.setOpacity(ga);
-    p.setPen(QPen(kBorder, 1));
-    p.setBrush(kCardBg);
+
+    auto& tm = Darwin::ThemeManager::instance();
+    QColor cardBg = tm.panelBackgroundColor();
+    QColor borderColor = tm.borderColor();
+    QColor accentColor = tm.accentColor();
+    QColor textPrimary = tm.textColor();
+    QColor textSecondary = tm.secondaryTextColor();
+    QColor successCol = tm.successColor();
+    QColor errorCol = tm.errorColor();
+
+    p.setPen(QPen(borderColor, 1));
+    p.setBrush(cardBg);
     p.drawRoundedRect(card, 12, 12);
 
     // 上部アクセントライン (#FF3366)
     QPainterPath accentBar;
     accentBar.addRoundedRect(card.left() + 20, card.top() + 1.5, card.width() - 40, 2.5, 1.2, 1.2);
     p.setPen(Qt::NoPen);
-    p.setBrush(kAccent);
+    p.setBrush(accentColor);
     p.drawPath(accentBar);
     p.restore();
 
@@ -124,14 +129,14 @@ void ProjectLoadDialog::paintEvent(QPaintEvent*)
         p.save();
         p.setOpacity(ga);
 
-        // プロジェクト名 (太字、#333)
+        // プロジェクト名
         p.setFont(titleFont);
-        p.setPen(kTextPrimary);
+        p.setPen(textPrimary);
         p.drawText(card.adjusted(20, 20, -20, 0), Qt::AlignTop | Qt::AlignHCenter, m_projectName);
 
         // サブテキスト
         p.setFont(subFont);
-        p.setPen(kTextSecondary);
+        p.setPen(textSecondary);
         p.drawText(card.adjusted(20, 44, -20, 0), Qt::AlignTop | Qt::AlignHCenter,
                    "Loading project...");
 
@@ -148,7 +153,7 @@ void ProjectLoadDialog::paintEvent(QPaintEvent*)
         // アクセントアーク (回転)
         float sweepDeg = 90.0f + 60.0f * std::sin(m_progressSweep * 6.2832f);
         QRectF arcRect(center.x() - outerR, center.y() - outerR, outerR * 2, outerR * 2);
-        p.setPen(QPen(kAccent, penW, Qt::SolidLine, Qt::RoundCap));
+        p.setPen(QPen(accentColor, penW, Qt::SolidLine, Qt::RoundCap));
         p.drawArc(arcRect, static_cast<int>(m_spinnerAngle * 16), static_cast<int>(sweepDeg * 16));
 
         p.restore();
@@ -163,9 +168,9 @@ void ProjectLoadDialog::paintEvent(QPaintEvent*)
 
         QPointF center(card.center().x(), card.center().y() - 2);
 
-        // サークル (#FF3366 → 緑にモーフ)
+        // サークル (#FF3366 → 成功色にモーフ)
         float circleR = 18.0f * ease;
-        QColor circleCol = kSuccess;
+        QColor circleCol = successCol;
         circleCol.setAlphaF(ease * 0.9);
         p.setPen(Qt::NoPen);
         p.setBrush(circleCol);
@@ -196,16 +201,16 @@ void ProjectLoadDialog::paintEvent(QPaintEvent*)
         // テキスト
         float ta = qBound(0.0f, (se - 250.0f) / 350.0f, 1.0f);
         p.setFont(subFont);
-        QColor textCol = kTextPrimary;
-        textCol.setAlphaF(ta);
-        p.setPen(textCol);
+        QColor tc = textPrimary;
+        tc.setAlphaF(ta);
+        p.setPen(tc);
         p.drawText(card.adjusted(20, 0, -20, -14), Qt::AlignBottom | Qt::AlignHCenter,
                    QString("%1 tracks loaded").arg(m_trackCount));
 
         // リングパルス
         if (t < 1.0f) {
             float rp = 18.0f + t * 35.0f;
-            QColor ring = kSuccess;
+            QColor ring = successCol;
             ring.setAlphaF((1.0f - t) * 0.35f);
             p.setPen(QPen(ring, 1.5 * (1.0f - t)));
             p.setBrush(Qt::NoBrush);
@@ -224,7 +229,7 @@ void ProjectLoadDialog::paintEvent(QPaintEvent*)
 
         QPointF center(card.center().x(), card.center().y() - 2);
         float circleR = 18.0f * ease;
-        QColor cc = kFailure;
+        QColor cc = errorCol;
         cc.setAlphaF(ease * 0.9);
         p.setPen(Qt::NoPen);
         p.setBrush(cc);
@@ -240,7 +245,7 @@ void ProjectLoadDialog::paintEvent(QPaintEvent*)
 
         float ta = qBound(0.0f, (se - 250.0f) / 350.0f, 1.0f);
         p.setFont(subFont);
-        QColor ftc = kFailure;
+        QColor ftc = errorCol;
         ftc.setAlphaF(ta * 0.85f);
         p.setPen(ftc);
         p.drawText(card.adjusted(20, 0, -20, -14), Qt::AlignBottom | Qt::AlignHCenter,

@@ -46,6 +46,10 @@ public:
     QColor accentBorderColor() const;
     QColor accentTextColor() const;
 
+    // セマンティックカラー
+    QColor successColor() const;
+    QColor errorColor() const;
+
 signals:
     // テーマ切り替え時に全ビューへ通知されるシグナル
     void themeChanged();

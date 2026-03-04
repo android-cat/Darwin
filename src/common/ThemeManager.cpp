@@ -113,4 +113,14 @@ QColor ThemeManager::accentTextColor() const
     return m_isDarkMode ? QColor("#fecdd3") : QColor("#e11d48");
 }
 
+QColor ThemeManager::successColor() const
+{
+    return QColor("#22c55e"); // green-500
+}
+
+QColor ThemeManager::errorColor() const
+{
+    return QColor("#ef4444"); // red-500
+}
+
 } // namespace Darwin

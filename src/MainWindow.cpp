@@ -369,41 +369,43 @@ void MainWindow::applyGlobalStyle()
     QString menuSelectedStr = isDark ? "#334155" : "#f1f5f9";
 
     QString css = QString(
-        "QMainWindow { background-color: %1; }\n"
+        "QMainWindow, QDialog { background-color: %1; }"
+        "QMessageBox, QProgressDialog { background-color: %1; }"
+        "QLabel { color: %2; }"
         // Header
-        "#header { background-color: %1; border-bottom: 1px solid %4; }\n"
-        "#appTitle { font-family: 'Segoe UI', 'Helvetica Neue', sans-serif; font-weight: 300; font-size: 20px; letter-spacing: 2px; text-transform: uppercase; color: %2; }\n"
+        "#header { background-color: %1; border-bottom: 1px solid %4; }"
+        "#appTitle { font-family: 'Segoe UI', 'Helvetica Neue', sans-serif; font-weight: 300; font-size: 20px; letter-spacing: 2px; text-transform: uppercase; color: %2; }"
         
         // Navigation Buttons
-        "QPushButton { border: none; background: none; font-family: 'Segoe UI', sans-serif; font-weight: 700; font-size: 11px; letter-spacing: 1px; color: %3; padding: 4px 12px; border-bottom: 2px solid transparent; text-transform: uppercase; }\n"
-        "QPushButton:checked { color: #FF3366; border-bottom-color: #FF3366; }\n"
-        "QPushButton:hover { color: %2; }\n"
+        "QPushButton { border: none; background: none; font-family: 'Segoe UI', sans-serif; font-weight: 700; font-size: 11px; letter-spacing: 1px; color: %3; padding: 4px 12px; border-bottom: 2px solid transparent; text-transform: uppercase; }"
+        "QPushButton:checked { color: #FF3366; border-bottom-color: #FF3366; }"
+        "QPushButton:hover { color: %2; }"
         
         // Transport
-        "#playBtn, #rewindBtn, #skipPrevBtn, #skipNextBtn { border: 1px solid %6; border-radius: 16px; color: %2; font-size: 14px; background-color: transparent; padding: 4px; }\n"
-        "#playBtn:hover, #rewindBtn:hover, #skipPrevBtn:hover, #skipNextBtn:hover { border-color: %7; background-color: %5; color: #FF3366; }\n"
-        "#bpmSpinBox { font-family: 'Segoe UI', sans-serif; font-size: 11px; font-weight: 700; color: %2; border: 1px solid %6; border-radius: 4px; padding: 4px 8px; background-color: %8; }\n"
-        "#bpmSpinBox:focus { border-color: #FF3366; }\n"
-        "#timecodeLabel { font-family: 'Roboto Mono', monospace; font-size: 11px; color: %3; }\n"
-        "#headerDivider { background-color: %4; border: none; }\n"
+        "#playBtn, #rewindBtn, #skipPrevBtn, #skipNextBtn { border: 1px solid %6; border-radius: 16px; color: %2; font-size: 14px; background-color: transparent; padding: 4px; }"
+        "#playBtn:hover, #rewindBtn:hover, #skipPrevBtn:hover, #skipNextBtn:hover { border-color: %7; background-color: %5; color: #FF3366; }"
+        "#bpmSpinBox { font-family: 'Segoe UI', sans-serif; font-size: 11px; font-weight: 700; color: %2; border: 1px solid %6; border-radius: 4px; padding: 4px 8px; background-color: %8; }"
+        "#bpmSpinBox:focus { border-color: #FF3366; }"
+        "#timecodeLabel { font-family: 'Roboto Mono', monospace; font-size: 11px; color: %3; }"
+        "#headerDivider { background-color: %4; border: none; }"
 
         // ScrollBars
-        "QScrollBar:vertical { border: none; background: transparent; width: 8px; margin: 0px; }\n"
-        "QScrollBar::handle:vertical { background: %4; min-height: 20px; border-radius: 4px; margin: 2px; }\n"
-        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }\n"
-        "QScrollBar:horizontal { border: none; background: transparent; height: 8px; margin: 0px; }\n"
-        "QScrollBar::handle:horizontal { background: %4; min-width: 20px; border-radius: 4px; margin: 2px; }\n"
-        "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; }\n"
+        "QScrollBar:vertical { border: none; background: transparent; width: 8px; margin: 0px; }"
+        "QScrollBar::handle:vertical { background: %4; min-height: 20px; border-radius: 4px; margin: 2px; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
+        "QScrollBar:horizontal { border: none; background: transparent; height: 8px; margin: 0px; }"
+        "QScrollBar::handle:horizontal { background: %4; min-width: 20px; border-radius: 4px; margin: 2px; }"
+        "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; }"
         
         // Menu / ToolButtons (ハンバーガーメニュー等)
-        "QMenu { background: %9; border: 1px solid %4; border-radius: 4px; padding: 4px 0px; font-family: 'Segoe UI', sans-serif; }\n"
-        "QMenu::item { padding: 6px 32px 6px 24px; font-size: 12px; color: %2; }\n"
-        "QMenu::item:selected { background: %10; color: #FF3366; }\n"
-        "QMenu::separator { height: 1px; background: %4; margin: 4px 8px; }\n"
-        "QToolButton { border: none; padding: 2px; border-radius: 4px; } QToolButton::menu-indicator { image: none; } QToolButton:hover { background-color: %10; }\n"
+        "QMenu { background: %9; border: 1px solid %4; border-radius: 4px; padding: 4px 0px; font-family: 'Segoe UI', sans-serif; }"
+        "QMenu::item { padding: 6px 32px 6px 24px; font-size: 12px; color: %2; }"
+        "QMenu::item:selected { background: %10; color: #FF3366; }"
+        "QMenu::separator { height: 1px; background: %4; margin: 4px 8px; }"
+        "QToolButton { border: none; padding: 2px; border-radius: 4px; } QToolButton::menu-indicator { image: none; } QToolButton:hover { background-color: %10; }"
     ).arg(bgStr, textStr, textSecStr, borderStr, btnHoverBgStr, btnBorderStr, btnBorderHoverStr, inputBgStr, menuBgStr, menuSelectedStr);
 
-    this->setStyleSheet(css);
+    qApp->setStyleSheet(css);
 
     // ─── SVGアイコンをテーマ色で再レンダリング ───────────────────────
     const QColor iconColor = tm.textColor();
