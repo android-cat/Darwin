@@ -6,8 +6,10 @@
 #include "Note.h"
 #include "VST3PluginInstance.h"
 #include <QDebug>
+#include <QMutexLocker>
 #include <algorithm>
 #include <cstring>
+#include "common/ModelAccessLock.h"
 
 PlaybackController::PlaybackController(Project* project, QObject* parent)
     : QObject(parent)
@@ -233,6 +235,8 @@ void PlaybackController::audioRenderCallback(float* outputBuffer, int numFrames,
 {
     // ゼロクリア
     memset(outputBuffer, 0, numFrames * numChannels * sizeof(float));
+
+    QMutexLocker<QRecursiveMutex> modelLock(&Darwin::modelAccessMutex());
 
     if (!m_project) {
         return;

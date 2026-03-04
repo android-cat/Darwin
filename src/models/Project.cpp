@@ -8,6 +8,8 @@
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QElapsedTimer>
+#include <QMutexLocker>
+#include "common/ModelAccessLock.h"
 
 Project::Project(const QString& name, QObject* parent)
     : QObject(parent)
@@ -56,6 +58,8 @@ void Project::setPlayheadPosition(qint64 position)
 
 Track* Project::addTrack(const QString& name)
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     QString trackName = name.isEmpty() 
         ? QString("Track %1").arg(m_tracks.size() + 1) 
         : name;
@@ -73,6 +77,8 @@ Track* Project::addTrack(const QString& name)
 
 void Project::removeTrack(Track* track)
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     if (m_tracks.removeOne(track)) {
         emit trackRemoved(track);
         emit modified();
@@ -82,6 +88,8 @@ void Project::removeTrack(Track* track)
 
 Track* Project::takeTrack(Track* track)
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     if (m_tracks.removeOne(track)) {
         emit trackRemoved(track);
         emit modified();
@@ -92,6 +100,8 @@ Track* Project::takeTrack(Track* track)
 
 void Project::insertTrack(Track* track, int index)
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     if (!track) return;
     track->setParent(this);
     if (index < 0 || index > m_tracks.size()) {
@@ -106,6 +116,8 @@ void Project::insertTrack(Track* track, int index)
 
 void Project::clearTracks()
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     for (Track* track : m_tracks) {
         emit trackRemoved(track);
         track->deleteLater();
@@ -139,6 +151,8 @@ int Project::trackIndex(Track* track) const
 
 void Project::moveTrack(int fromIndex, int toIndex)
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     if (fromIndex < 0 || fromIndex >= m_tracks.size()) return;
     if (toIndex < 0 || toIndex >= m_tracks.size()) return;
     if (fromIndex == toIndex) return;
@@ -149,6 +163,8 @@ void Project::moveTrack(int fromIndex, int toIndex)
 
 void Project::moveFolderBlock(Track* folder, int toFlatIndex)
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     if (!folder || !folder->isFolder()) return;
     int folderIdx = m_tracks.indexOf(folder);
     if (folderIdx < 0) return;
@@ -190,6 +206,8 @@ void Project::moveFolderBlock(Track* folder, int toFlatIndex)
 
 Track* Project::addFolderTrack(const QString& name)
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     QString folderName = name.isEmpty()
         ? QString("Folder %1").arg(m_tracks.size() + 1)
         : name;
@@ -208,6 +226,8 @@ Track* Project::addFolderTrack(const QString& name)
 
 void Project::addTrackToFolder(Track* track, Track* folder)
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     if (!track || !folder || !folder->isFolder()) return;
     // 循環チェック（自身をその子孫フォルダに入れることはできない）
     Track* ancestor = folder;
@@ -260,6 +280,8 @@ void Project::addTrackToFolder(Track* track, Track* folder)
 
 void Project::removeTrackFromFolder(Track* track)
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     if (!track || track->parentFolderId() < 0) return;
     track->setParentFolderId(-1);
     emit folderStructureChanged();

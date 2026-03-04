@@ -2,6 +2,7 @@
 #include <QWidget>
 #include <QTimer>
 #include <QMap>
+#include <QPointer>
 
 class Clip;
 class Note;
@@ -26,8 +27,8 @@ private:
     void updateVelocityFromMouse(const QPoint& pos);
     void tickAnimation();
 
-    Clip* m_activeClip;
-    Note* m_interactingNote;
+    QPointer<Clip> m_activeClip;
+    QPointer<Note> m_interactingNote;
     bool m_isDragging;
 
     // ベロシティバーの表示用補間値（スムーズアニメーション）

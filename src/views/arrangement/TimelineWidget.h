@@ -92,6 +92,17 @@ private:
     void connectTrackForChord(Track* track);
     void connectClipForChord(Clip* clip);
 
+    /// コード帯のキャッシュ構造
+    struct ChordSpan {
+        qint64 startTick;
+        qint64 endTick;
+        QString name;
+    };
+    QList<ChordSpan> m_cachedChordSpans;
+    bool m_chordCacheDirty = true;
+    void rebuildChordCache();
+    void invalidateChordCache() { m_chordCacheDirty = true; }
+
     Project* m_project = nullptr;
     QScrollArea* m_gridScroll = nullptr;
     QTimer* m_scrollTimer = nullptr;

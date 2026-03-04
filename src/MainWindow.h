@@ -10,6 +10,7 @@
 #include <QAction>
 #include <QUndoStack>
 #include <QToolButton>
+#include <QtGlobal>
 
 class QAbstractAnimation;
 class BulbRaysOverlay;
@@ -86,4 +87,5 @@ private:
     PlaybackController *m_playbackController;
     ComposeView *m_composeView;
     QUndoStack *m_undoStack;
+    quint64 m_projectLoadGeneration = 0;
 };

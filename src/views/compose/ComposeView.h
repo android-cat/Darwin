@@ -4,6 +4,7 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QSplitter>
+#include <QPointer>
 #include "VST3Scanner.h"
 
 class ArrangementGridWidget;
@@ -91,5 +92,5 @@ private:
     VST3Scanner* m_scanner;
     QVector<VST3PluginInfo> m_scannedPlugins;   ///< スキャン済みプラグイン一覧
     int m_selectedPluginIndex;                   ///< 選択中プラグインのインデックス
-    Track* m_currentTrack;                       ///< 現在選択中のトラック
+    QPointer<Track> m_currentTrack;              ///< 現在選択中のトラック
 };

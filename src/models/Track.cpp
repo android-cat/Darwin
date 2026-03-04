@@ -7,6 +7,8 @@
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QElapsedTimer>
+#include <QMutexLocker>
+#include "common/ModelAccessLock.h"
 
 int Track::s_nextId = 1;
 
@@ -155,6 +157,8 @@ void Track::setFolderExpanded(bool expanded)
 
 Clip* Track::addClip(qint64 startTick, qint64 durationTicks)
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     Clip* clip = new Clip(startTick, durationTicks, this);
     m_clips.append(clip);
     
@@ -166,6 +170,8 @@ Clip* Track::addClip(qint64 startTick, qint64 durationTicks)
 
 void Track::removeClip(Clip* clip)
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     if (m_clips.removeOne(clip)) {
         emit clipRemoved(clip);
         emit propertyChanged();
@@ -175,6 +181,8 @@ void Track::removeClip(Clip* clip)
 
 Clip* Track::takeClip(Clip* clip)
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     if (m_clips.removeOne(clip)) {
         emit clipRemoved(clip);
         emit propertyChanged();
@@ -185,6 +193,8 @@ Clip* Track::takeClip(Clip* clip)
 
 void Track::insertClip(Clip* clip)
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     if (!clip) return;
     clip->setParent(this);
     m_clips.append(clip);
@@ -194,6 +204,8 @@ void Track::insertClip(Clip* clip)
 
 void Track::clearClips()
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     for (Clip* clip : m_clips) {
         emit clipRemoved(clip);
         clip->deleteLater();

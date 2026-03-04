@@ -43,6 +43,13 @@ void VelocityLaneWidget::setActiveClip(Clip* clip)
     
     if (m_activeClip) {
         connect(m_activeClip, &Clip::changed, this, [this](){ update(); });
+        connect(m_activeClip, &QObject::destroyed, this, [this]() {
+            m_activeClip = nullptr;
+            m_interactingNote = nullptr;
+            m_isDragging = false;
+            m_displayVelocities.clear();
+            update();
+        });
     }
     
     update();

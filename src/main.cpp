@@ -8,6 +8,11 @@
 
 #ifdef Q_OS_WIN
 #include <objbase.h>
+
+// NVIDIA Optimus: 外部GPU（高性能GPU）を優先して使用する
+extern "C" { __declspec(dllexport) unsigned long NvOptimusEnablement = 1; }
+// AMD PowerXpress: 外部GPU（高性能GPU）を優先して使用する
+extern "C" { __declspec(dllexport) unsigned long AmdPowerXpressRequestHighPerformance = 1; }
 #endif
 
 int main(int argc, char *argv[])

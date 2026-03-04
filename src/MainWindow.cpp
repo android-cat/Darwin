@@ -632,6 +632,8 @@ void MainWindow::updateWindowTitle()
 
 void MainWindow::newProject()
 {
+    ++m_projectLoadGeneration;
+
     // 再生を停止
     if (m_playbackController) {
         m_playbackController->stop();
@@ -654,6 +656,9 @@ void MainWindow::newProject()
 
 void MainWindow::openProject()
 {
+    ++m_projectLoadGeneration;
+    const quint64 loadGeneration = m_projectLoadGeneration;
+
     // デフォルトでProjectフォルダを開く
     QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)
                          + "/Darwin/Projects";
@@ -682,10 +687,15 @@ void MainWindow::openProject()
 
     // バックグラウンドでは「ファイルI/O + JSONパース」のみを行う
     auto* watcher = new QFutureWatcher<LoadProjectResult>(this);
-    connect(watcher, &QFutureWatcher<LoadProjectResult>::finished, this, [this, dlg, watcher, filePath]() {
+    connect(watcher, &QFutureWatcher<LoadProjectResult>::finished, this, [this, dlg, watcher, filePath, loadGeneration]() {
         const LoadProjectResult result = watcher->result();
         watcher->deleteLater();
         QPointer<ProjectLoadDialog> safeDlg(dlg);
+
+        if (loadGeneration != m_projectLoadGeneration) {
+            if (safeDlg) safeDlg->close();
+            return;
+        }
 
         if (!result.ok || !m_project->fromJson(result.json, true)) {
             const QString reason = result.error.isEmpty()
@@ -704,7 +714,7 @@ void MainWindow::openProject()
         m_undoStack->clear();
         updateWindowTitle();
 
-        QList<Track*> restoreQueue;
+        QList<QPointer<Track>> restoreQueue;
         if (m_project->masterTrack()) {
             restoreQueue.append(m_project->masterTrack());
         }
@@ -714,12 +724,17 @@ void MainWindow::openProject()
 
         auto index = std::make_shared<int>(0);
         auto step = std::make_shared<std::function<void()>>();
-        *step = [this, safeDlg, restoreQueue, index, step]() {
+        *step = [this, safeDlg, restoreQueue, index, step, loadGeneration]() {
+            if (loadGeneration != m_projectLoadGeneration) {
+                if (safeDlg) safeDlg->close();
+                return;
+            }
+
             QElapsedTimer budget;
             budget.start();
 
             while (*index < restoreQueue.size()) {
-                Track* track = restoreQueue.at(*index);
+                Track* track = restoreQueue.at(*index).data();
                 ++(*index);
 
                 if (track && track->hasDeferredPluginRestore()) {

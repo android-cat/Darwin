@@ -189,22 +189,22 @@ void PianoRollGridWidget::setProject(Project* project)
     
     if (m_project) {
         auto connectNote = [this](Note* note) {
-            connect(note, &Note::changed, this, [this](){ update(); });
+            connect(note, &Note::changed, this, &PianoRollGridWidget::scheduleUpdate);
         };
 
         auto connectClip = [this, connectNote](Clip* clip) {
-            connect(clip, &Clip::changed, this, [this](){ update(); });
+            connect(clip, &Clip::changed, this, &PianoRollGridWidget::scheduleUpdate);
             connect(clip, &Clip::noteAdded, this, [this, connectNote](Note* note) {
                 connectNote(note);
                 startNoteAnim(note, NoteAnim::PopIn);
-                update();
+                scheduleUpdate();
             });
             connect(clip, &Clip::noteRemoved, this, [this](Note* note){
                 if (m_selectedNote == note) m_selectedNote = nullptr;
                 if (m_selectedNotes.contains(note)) m_selectedNotes.removeAll(note);
                 
                 startNoteAnim(note, NoteAnim::FadeOut);
-                update();
+                scheduleUpdate();
             });
             
             for (Note* note : clip->notes()) {
@@ -213,12 +213,17 @@ void PianoRollGridWidget::setProject(Project* project)
         };
 
         auto connectTrack = [this, connectClip](Track* track) {
-            connect(track, &Track::propertyChanged, this, [this](){ update(); });
+            connect(track, &Track::propertyChanged, this, &PianoRollGridWidget::scheduleUpdate);
             connect(track, &Track::clipAdded, this, [this, connectClip](Clip* clip) {
                 connectClip(clip);
-                update();
+                scheduleUpdate();
             });
-            connect(track, &Track::clipRemoved, this, [this](Clip*){ update(); });
+            connect(track, &Track::clipRemoved, this, [this](Clip* clip){
+                if (m_activeClip && m_activeClip == clip) {
+                    setActiveClip(nullptr);
+                }
+                scheduleUpdate();
+            });
 
             for (Clip* clip : track->clips()) {
                 connectClip(clip);
@@ -233,10 +238,15 @@ void PianoRollGridWidget::setProject(Project* project)
         // 新規トラック追加時にも接続
         connect(m_project, &Project::trackAdded, this, [this, connectTrack](Track* track){
             connectTrack(track);
-            update();
+            scheduleUpdate();
         });
         
-        connect(m_project, &Project::trackRemoved, this, [this](Track*){ update(); });
+        connect(m_project, &Project::trackRemoved, this, [this](Track* track){
+            if (m_activeClip && m_activeClip->parent() == track) {
+                setActiveClip(nullptr);
+            }
+            scheduleUpdate();
+        });
     }
     
     update();
@@ -334,6 +344,12 @@ void PianoRollGridWidget::tickAnimations()
         m_noteAnims.remove(n);
         m_fadingNotes.removeAll(n);
     }
+
+    for (int i = m_fadingNotes.size() - 1; i >= 0; --i) {
+        if (m_fadingNotes[i].isNull()) {
+            m_fadingNotes.removeAt(i);
+        }
+    }
     
     // バースト共通エンジンで更新
     if (BurstAnimation::tickBurst(now, BurstAnimation::pianoRollParams(),
@@ -346,4 +362,14 @@ void PianoRollGridWidget::tickAnimations()
     }
     
     update();
+}
+
+void PianoRollGridWidget::scheduleUpdate()
+{
+    if (m_updatePending) return;
+    m_updatePending = true;
+    QTimer::singleShot(0, this, [this]() {
+        m_updatePending = false;
+        update();
+    });
 }

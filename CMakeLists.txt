@@ -104,6 +104,8 @@ add_executable(Darwin
     src/common/AudioFileReader.cpp
     src/common/ThemeManager.cpp
     src/common/ThemeManager.h
+    src/common/ModelAccessLock.cpp
+    src/common/ModelAccessLock.h
     # Plugins
     src/plugins/VST3Scanner.cpp
     src/plugins/VST3Scanner.h

@@ -2,6 +2,7 @@
 #include <QWidget>
 #include <QTimer>
 #include <QMap>
+#include <QPointer>
 #include <QElapsedTimer>
 #include "common/BurstAnimationHelper.h"
 
@@ -54,7 +55,7 @@ private:
     qint64 m_playheadPosition;
     bool m_isPlaying = false;
     float m_trailOpacity = 0.0f;
-    Clip* m_activeClip;
+    QPointer<Clip> m_activeClip;
     Project* m_project;
     QScrollArea* m_scrollArea = nullptr;
     QUndoStack* m_undoStack = nullptr;
@@ -86,7 +87,7 @@ private:
         enum Type { PopIn, SelectGlow, FadeOut } type;
     };
     QMap<Note*, NoteAnim> m_noteAnims;
-    QList<Note*> m_fadingNotes;         // 削除済みだがフェードアウト中のノート
+    QList<QPointer<Note>> m_fadingNotes;         // 削除済みだがフェードアウト中のノート
     QElapsedTimer m_animClock;
     QTimer m_animTimer;
     Note* m_prevSelectedNote;
@@ -100,5 +101,10 @@ private:
     void tickAnimations();
     void drawBurstEffects(QPainter& p);
     
+    // ===== 描画デバウンス =====
+    bool m_updatePending = false;
+    /** データ変更時の遅延 update()（同一イベントループ内で複数回呼ばれても1回だけ再描画） */
+    void scheduleUpdate();
+
     static constexpr int MIN_BARS = 64;
 };

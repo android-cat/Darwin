@@ -9,6 +9,7 @@
 #include <QJsonArray>
 #include <QTimer>
 #include <QMap>
+#include <QPointer>
 #include <QElapsedTimer>
 #include "common/BurstAnimationHelper.h"
 
@@ -63,8 +64,9 @@ protected:
     void dropEvent(QDropEvent *event) override;
     
 private:
-    void drawClips(QPainter& p);
-    void drawFolderSummary(QPainter& p, Track* folder, int y, int rowHeight);
+    void drawClips(QPainter& p, const QRect& visibleRect);
+    void drawFolderSummary(QPainter& p, Track* folder, int y, int rowHeight,
+                           const QRect& visibleRect);
     void drawAudioWaveform(QPainter& p, const QRectF& clipRect, class Clip* clip,
                            const QColor& waveColor);
     void handleMidiFileDrop(const QString& filePath, const QPoint& dropPos);
@@ -74,6 +76,11 @@ private:
     QList<Track*> visibleTracks() const;
     /** 可視トラック内でのインデックスを返す (-1 = 非表示) */
     int visibleTrackIndex(Track* track) const;
+    
+    /** 可視トラックキャッシュ（フォルダ構造変更・トラック追加削除時にのみ再構築） */
+    mutable QList<Track*> m_cachedVisibleTracks;
+    mutable bool m_visibleTracksCacheDirty = true;
+    void invalidateVisibleTracksCache() { m_visibleTracksCacheDirty = true; }
     
     qint64 m_playheadPosition;
     bool m_isPlaying = false;
@@ -105,7 +112,7 @@ private:
         enum Type { PopIn, FadeOut, SelectPulse, BurstOut } type;
     };
     QMap<int, ClipAnim> m_clipAnims;
-    QMap<int, Clip*> m_fadingClips;     // 削除済みだがフェードアウト中のクリップ
+    QMap<int, QPointer<Clip>> m_fadingClips;     // 削除済みだがフェードアウト中のクリップ
     QElapsedTimer m_animClock;
     QTimer m_animTimer;
     int m_prevSelectedClipId;
@@ -166,4 +173,9 @@ private:
     QUndoStack* m_undoStack = nullptr;
     double m_zoomLevel = 1.0;   // ズーム倍率 (0.25x 〜 4.0x)
     static constexpr int MIN_BARS = 64;
+
+    // ===== 描画デバウンス =====
+    bool m_updatePending = false;
+    /** データ変更時の遅延 update()（同一イベントループ内で複数回呼ばれても1回だけ再描画） */
+    void scheduleUpdate();
 };

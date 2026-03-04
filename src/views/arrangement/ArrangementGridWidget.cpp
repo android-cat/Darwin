@@ -30,6 +30,7 @@ ArrangementGridWidget::ArrangementGridWidget(QWidget *parent)
     , m_isResizingLeft(false)
     , m_prevSelectedClipId(-1)
     , m_zoomLevel(1.0)
+    , m_updatePending(false)
 {
     setMinimumWidth(static_cast<int>(MIN_BARS * pixelsPerBar())); // 最低4小節
     setMouseTracking(true); // For resize cursor
@@ -53,13 +54,13 @@ void ArrangementGridWidget::setProject(Project* project)
     
     auto setupTrack = [this](Track* track) {
         auto connectClip = [this](Clip* clip) {
-            connect(clip, &Clip::changed, this, [this](){ update(); });
+            connect(clip, &Clip::changed, this, &ArrangementGridWidget::scheduleUpdate);
             connect(clip, &Clip::noteAdded, this, [this](Note* note) {
-                connect(note, &Note::changed, this, [this](){ update(); });
-                update();
+                connect(note, &Note::changed, this, &ArrangementGridWidget::scheduleUpdate);
+                scheduleUpdate();
             });
             for (Note* note : clip->notes()) {
-                connect(note, &Note::changed, this, [this](){ update(); });
+                connect(note, &Note::changed, this, &ArrangementGridWidget::scheduleUpdate);
             }
             updateDynamicSize();
         };
@@ -86,17 +87,34 @@ void ArrangementGridWidget::setProject(Project* project)
 
     connect(m_project, &Project::trackAdded, this, [this, setupTrack](Track* track) {
         setupTrack(track);
+        invalidateVisibleTracksCache();
         updateDynamicSize();
     });
-    connect(m_project, &Project::trackRemoved, this, [this](Track*){ updateDynamicSize(); });
-    connect(m_project, &Project::exportRangeChanged, this, [this](){ update(); });
-    connect(m_project, &Project::folderStructureChanged, this, [this]() { updateDynamicSize(); });
+    connect(m_project, &Project::trackRemoved, this, [this](Track*){ 
+        invalidateVisibleTracksCache();
+        updateDynamicSize(); 
+    });
+    connect(m_project, &Project::exportRangeChanged, this, &ArrangementGridWidget::scheduleUpdate);
+    connect(m_project, &Project::folderStructureChanged, this, [this]() { 
+        invalidateVisibleTracksCache();
+        updateDynamicSize(); 
+    });
     
     // 既存トラックの監視
     for (int i = 0; i < m_project->trackCount(); ++i) {
         setupTrack(m_project->trackAt(i));
     }
     updateDynamicSize();
+}
+
+void ArrangementGridWidget::scheduleUpdate()
+{
+    if (m_updatePending) return;
+    m_updatePending = true;
+    QTimer::singleShot(0, this, [this]() {
+        m_updatePending = false;
+        update();
+    });
 }
 
 double ArrangementGridWidget::pixelsPerBar() const
@@ -228,15 +246,19 @@ void ArrangementGridWidget::setPlayheadPosition(qint64 tickPosition)
 
 QList<Track*> ArrangementGridWidget::visibleTracks() const
 {
-    QList<Track*> result;
-    if (!m_project) return result;
+    if (!m_visibleTracksCacheDirty) {
+        return m_cachedVisibleTracks;
+    }
+    m_cachedVisibleTracks.clear();
+    if (!m_project) return m_cachedVisibleTracks;
     for (int i = 0; i < m_project->trackCount(); ++i) {
         Track* track = m_project->trackAt(i);
         if (m_project->isTrackVisibleInHierarchy(track)) {
-            result.append(track);
+            m_cachedVisibleTracks.append(track);
         }
     }
-    return result;
+    m_visibleTracksCacheDirty = false;
+    return m_cachedVisibleTracks;
 }
 
 int ArrangementGridWidget::visibleTrackIndex(Track* track) const

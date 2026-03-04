@@ -10,6 +10,7 @@
 void TimelineWidget::setProject(Project* project)
 {
     m_project = project;
+    m_chordCacheDirty = true;
     if (m_project) {
         connect(m_project, &Project::exportRangeChanged, this, QOverload<>::of(&QWidget::update));
         connect(m_project, &Project::flagsChanged, this, QOverload<>::of(&QWidget::update));
@@ -37,25 +38,25 @@ void TimelineWidget::setPlaying(bool playing)
 
 /**
  * @brief トラックの変更をコード表記更新に接続する
- *
- * トラックの表示/非表示変更、クリップの追加/削除、
- * およびクリップ内ノートの変更を監視する。
  */
 void TimelineWidget::connectTrackForChord(Track* track)
 {
-    // トラックプロパティ変更（表示/非表示含む）→ コード再描画
-    connect(track, &Track::propertyChanged, this, QOverload<>::of(&QWidget::update));
-
-    // 新クリップ追加時
-    connect(track, &Track::clipAdded, this, [this](Clip* clip) {
-        connectClipForChord(clip);
+    connect(track, &Track::propertyChanged, this, [this]() {
+        invalidateChordCache();
         update();
     });
 
-    // クリップ削除時
-    connect(track, &Track::clipRemoved, this, QOverload<>::of(&QWidget::update));
+    connect(track, &Track::clipAdded, this, [this](Clip* clip) {
+        connectClipForChord(clip);
+        invalidateChordCache();
+        update();
+    });
 
-    // 既存クリップを接続
+    connect(track, &Track::clipRemoved, this, [this]() {
+        invalidateChordCache();
+        update();
+    });
+
     for (Clip* clip : track->clips()) {
         connectClipForChord(clip);
     }
@@ -66,18 +67,25 @@ void TimelineWidget::connectTrackForChord(Track* track)
  */
 void TimelineWidget::connectClipForChord(Clip* clip)
 {
-    // クリップ変更（位置・長さ変更、ノート追加/削除）→ コード再描画
-    connect(clip, &Clip::changed, this, QOverload<>::of(&QWidget::update));
-
-    // 新ノート追加時 → そのノートの個別変更も監視
-    connect(clip, &Clip::noteAdded, this, [this](Note* note) {
-        connect(note, &Note::changed, this, QOverload<>::of(&QWidget::update));
+    connect(clip, &Clip::changed, this, [this]() {
+        invalidateChordCache();
         update();
     });
 
-    // 既存ノートの個別変更を監視（ピアノロールでの編集等）
+    connect(clip, &Clip::noteAdded, this, [this](Note* note) {
+        connect(note, &Note::changed, this, [this]() {
+            invalidateChordCache();
+            update();
+        });
+        invalidateChordCache();
+        update();
+    });
+
     for (Note* note : clip->notes()) {
-        connect(note, &Note::changed, this, QOverload<>::of(&QWidget::update));
+        connect(note, &Note::changed, this, [this]() {
+            invalidateChordCache();
+            update();
+        });
     }
 }
 
@@ -148,79 +156,20 @@ void TimelineWidget::paintEvent(QPaintEvent* event)
         // コード帯の背景
         p.fillRect(0, chordLaneTop, width(), chordLaneH + 2, Darwin::ThemeManager::instance().backgroundColor());
 
-        // ── ノートのタイミングに基づくコード区間を構築 ──
-        //   全ノートの開始/終了 tick を境界点として列挙し、
-        //   各区間でアクティブなピッチからコードを検出する。
-
-        // 1) 全ノートを絶対位置で収集
-        struct AbsNote {
-            qint64 start;
-            qint64 end;
-            int pitchClass;
-        };
-        QList<AbsNote> allNotes;
-        for (Track* track : m_project->tracks()) {
-            if (!track->isVisible()) continue;
-            for (Clip* clip : track->clips()) {
-                for (Note* note : clip->notes()) {
-                    qint64 absStart = clip->startTick() + note->startTick();
-                    qint64 absEnd   = absStart + note->durationTicks();
-                    allNotes.append({absStart, absEnd, note->pitch() % 12});
-                }
-            }
+        // ── キャッシュされたコード帯を描画 ──
+        //   ノート変更時にのみ再計算し、paintEvent毎の全ノート走査を回避
+        if (m_chordCacheDirty) {
+            rebuildChordCache();
         }
 
-        if (!allNotes.isEmpty()) {
-            // 2) 境界 tick を収集（重複排除・ソート済み）
-            QList<qint64> boundaries;
-            for (const auto& n : allNotes) {
-                boundaries.append(n.start);
-                boundaries.append(n.end);
-            }
-            std::sort(boundaries.begin(), boundaries.end());
-            boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
-
-            // 3) 各区間のコードを判定してスパンに連結
-            struct ChordSpan {
-                qint64 startTick;
-                qint64 endTick;
-                QString name;
-            };
-            QList<ChordSpan> spans;
-
-            for (int i = 0; i + 1 < boundaries.size(); ++i) {
-                qint64 segStart = boundaries[i];
-                qint64 segEnd   = boundaries[i + 1];
-                if (segEnd <= segStart) continue;
-
-                // この区間でアクティブなピッチクラスを収集
-                QSet<int> pitchClasses;
-                for (const auto& n : allNotes) {
-                    if (n.start < segEnd && n.end > segStart) {
-                        pitchClasses.insert(n.pitchClass);
-                    }
-                }
-
-                QString chordName = ChordDetector::detect(pitchClasses);
-                if (chordName.isEmpty()) continue;
-
-                // 直前スパンと同じコードなら連結
-                if (!spans.isEmpty() && spans.last().name == chordName
-                    && spans.last().endTick == segStart) {
-                    spans.last().endTick = segEnd;
-                } else {
-                    spans.append({segStart, segEnd, chordName});
-                }
-            }
-
-            // 4) スパンを描画
+        if (!m_cachedChordSpans.isEmpty()) {
             p.setRenderHint(QPainter::Antialiasing, true);
             QFont chordFont("Segoe UI", 8);
             chordFont.setBold(true);
             p.setFont(chordFont);
             QFontMetrics cfm(chordFont);
 
-            for (const auto& span : spans) {
+            for (const auto& span : m_cachedChordSpans) {
                 double x1 = span.startTick * PIXELS_PER_TICK * m_zoomLevel;
                 double x2 = span.endTick   * PIXELS_PER_TICK * m_zoomLevel;
                 double spanW = x2 - x1;
@@ -238,7 +187,6 @@ void TimelineWidget::paintEvent(QPaintEvent* event)
                 p.drawLine(QPointF(x1 + 1, chordLaneTop + 2), QPointF(x1 + 1, chordLaneTop + chordLaneH - 2));
 
                 // コード名テキスト（幅が十分ある場合のみ）
-                int textW = cfm.horizontalAdvance(span.name) + 6;
                 if (spanW > 12.0) {
                     p.setPen(Darwin::ThemeManager::instance().secondaryTextColor());  // ダーク: スレートグレー
                     double maxTextW = spanW - 8.0;
@@ -726,5 +674,74 @@ void TimelineWidget::tickFlagAnimations()
         update();
     } else {
         m_flagAnimTimer.stop();
+    }
+}
+
+/**
+ * @brief コード帯のキャッシュを再構築する
+ *
+ * ノート・クリップ・トラックの変更時にのみ呼ばれ、
+ * paintEvent 毎の全ノート走査による O(N*M) 処理を回避する。
+ */
+void TimelineWidget::rebuildChordCache()
+{
+    m_cachedChordSpans.clear();
+    m_chordCacheDirty = false;
+    if (!m_project) return;
+
+    using namespace Darwin;
+
+    // 1) 全ノートを絶対位置で収集
+    struct AbsNote {
+        qint64 start;
+        qint64 end;
+        int pitchClass;
+    };
+    QList<AbsNote> allNotes;
+    for (Track* track : m_project->tracks()) {
+        if (!track->isVisible()) continue;
+        for (Clip* clip : track->clips()) {
+            for (Note* note : clip->notes()) {
+                qint64 absStart = clip->startTick() + note->startTick();
+                qint64 absEnd   = absStart + note->durationTicks();
+                allNotes.append({absStart, absEnd, note->pitch() % 12});
+            }
+        }
+    }
+
+    if (allNotes.isEmpty()) return;
+
+    // 2) 境界 tick を収集（重複排除・ソート済み）
+    QList<qint64> boundaries;
+    boundaries.reserve(allNotes.size() * 2);
+    for (const auto& n : allNotes) {
+        boundaries.append(n.start);
+        boundaries.append(n.end);
+    }
+    std::sort(boundaries.begin(), boundaries.end());
+    boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
+
+    // 3) 各区間のコードを判定してスパンに連結
+    for (int i = 0; i + 1 < boundaries.size(); ++i) {
+        qint64 segStart = boundaries[i];
+        qint64 segEnd   = boundaries[i + 1];
+        if (segEnd <= segStart) continue;
+
+        QSet<int> pitchClasses;
+        for (const auto& n : allNotes) {
+            if (n.start < segEnd && n.end > segStart) {
+                pitchClasses.insert(n.pitchClass);
+            }
+        }
+
+        QString chordName = ChordDetector::detect(pitchClasses);
+        if (chordName.isEmpty()) continue;
+
+        if (!m_cachedChordSpans.isEmpty() && m_cachedChordSpans.last().name == chordName
+            && m_cachedChordSpans.last().endTick == segStart) {
+            m_cachedChordSpans.last().endTick = segEnd;
+        } else {
+            m_cachedChordSpans.append({segStart, segEnd, chordName});
+        }
     }
 }

@@ -122,9 +122,11 @@ void ArrangementGridWidget::mouseMoveEvent(QMouseEvent *event)
         if (!m_project) return;
         double mx = event->position().x();
         qint64 newTick = qMax(0LL, static_cast<qint64>(mx / pixelsPerTick()));
-        emit requestSeek(newTick);
-        ensurePlayheadVisible();
-        update();
+        if (newTick != m_playheadPosition) {
+            emit requestSeek(newTick);
+            ensurePlayheadVisible();
+            update();
+        }
         return;
     }
 
@@ -185,20 +187,27 @@ void ArrangementGridWidget::mouseMoveEvent(QMouseEvent *event)
         if (selectedClip) {
             double dx = event->position().x() - m_lastMousePos.x();
             qint64 tickDelta = static_cast<qint64>(dx / pixelsPerTick());
+            bool visualChanged = false;
 
             if (m_isDragging) {
-                selectedClip->setStartTick(qMax(0LL, selectedClip->startTick() + tickDelta));
+                if (tickDelta != 0) {
+                    selectedClip->setStartTick(qMax(0LL, selectedClip->startTick() + tickDelta));
+                    visualChanged = true;
+                }
                 
                 // トラック間移動: 現在のY座標からホバー先トラックを計算
                 int rowHeight = 100;
                 QList<Track*> visTracks = visibleTracks();
                 int hoverTrack = qBound(0, event->pos().y() / rowHeight, visTracks.size() - 1);
-                m_dragCurrentTrackIndex = hoverTrack;
+                if (m_dragCurrentTrackIndex != hoverTrack) {
+                    m_dragCurrentTrackIndex = hoverTrack;
+                    visualChanged = true;
+                }
             } else if (m_isResizingLeft) {
                 // 左端リサイズ: startTickを移動し、durationを逆方向に調整
                 qint64 newStart = selectedClip->startTick() + tickDelta;
                 qint64 newDuration = selectedClip->durationTicks() - tickDelta;
-                if (newStart >= 0 && newDuration >= TICKS_PER_BEAT) {
+                if (tickDelta != 0 && newStart >= 0 && newDuration >= TICKS_PER_BEAT) {
                     // 先にトリム/削除を行う（Note::setStartTick の qMax(0) クランプ前に判定）
                     QList<Note*> toRemove;
                     for (Note* note : selectedClip->notes()) {
@@ -221,10 +230,11 @@ void ArrangementGridWidget::mouseMoveEvent(QMouseEvent *event)
                     }
                     selectedClip->setStartTick(newStart);
                     selectedClip->setDurationTicks(newDuration);
+                    visualChanged = true;
                 }
             } else if (m_isResizing) {
                 qint64 newDuration = selectedClip->durationTicks() + tickDelta;
-                if (newDuration >= TICKS_PER_BEAT) {
+                if (tickDelta != 0 && newDuration >= TICKS_PER_BEAT) {
                     selectedClip->setDurationTicks(newDuration);
                     // 縮小でクリップ範囲外に出たノートをトリム/削除
                     QList<Note*> toRemove;
@@ -240,11 +250,14 @@ void ArrangementGridWidget::mouseMoveEvent(QMouseEvent *event)
                     for (Note* note : toRemove) {
                         selectedClip->removeNote(note);
                     }
+                    visualChanged = true;
                 }
             }
             
             m_lastMousePos = event->pos();
-            update();
+            if (visualChanged) {
+                update();
+            }
         }
     } else {
         // カーソル形状をホバー状態に応じて更新

@@ -9,6 +9,8 @@
 #include <QFileInfo>
 #include <QDebug>
 #include <cmath>
+#include <QMutexLocker>
+#include "common/ModelAccessLock.h"
 
 int Clip::s_nextId = 1;
 
@@ -43,6 +45,8 @@ void Clip::setDurationTicks(qint64 durationTicks)
 
 Note* Clip::addNote(int pitch, qint64 startTick, qint64 durationTicks, int velocity)
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     Note* note = new Note(pitch, startTick, durationTicks, velocity, this);
     m_notes.append(note);
     
@@ -56,6 +60,8 @@ Note* Clip::addNote(int pitch, qint64 startTick, qint64 durationTicks, int veloc
 
 void Clip::removeNote(Note* note)
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     if (m_notes.removeOne(note)) {
         emit noteRemoved(note);
         emit changed();
@@ -65,6 +71,8 @@ void Clip::removeNote(Note* note)
 
 Note* Clip::takeNote(Note* note)
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     if (m_notes.removeOne(note)) {
         emit noteRemoved(note);
         emit changed();
@@ -75,6 +83,8 @@ Note* Clip::takeNote(Note* note)
 
 void Clip::insertNote(Note* note)
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     if (!note) return;
     note->setParent(this);
     m_notes.append(note);
@@ -85,6 +95,8 @@ void Clip::insertNote(Note* note)
 
 void Clip::clearNotes()
 {
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
     for (Note* note : m_notes) {
         emit noteRemoved(note);
         note->deleteLater();

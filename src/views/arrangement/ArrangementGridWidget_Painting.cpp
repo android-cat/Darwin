@@ -7,6 +7,7 @@
 #include "models/Track.h"
 #include "models/Clip.h"
 #include "models/Note.h"
+#include <QPaintEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPainterPath>
@@ -18,7 +19,6 @@ using namespace Darwin;
 
 void ArrangementGridWidget::paintEvent(QPaintEvent *event)
 {
-    Q_UNUSED(event)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
 
@@ -27,65 +27,61 @@ void ArrangementGridWidget::paintEvent(QPaintEvent *event)
     double ppBeat = ppBar / BEATS_PER_BAR;
     
     int numRows = (m_project) ? visibleTracks().size() : 0;
-    // Ensure we draw at least a few empty rows if no tracks
     if (numRows == 0) numRows = 4;
 
     int widgetWidth = width();
     int widgetHeight = numRows * rowHeight;
-    if (widgetHeight < height()) widgetHeight = height(); // Fill
+    if (widgetHeight < height()) widgetHeight = height();
     
+    // ビューポートカリング用の可視領域を取得
+    const QRect visibleRect = event ? event->rect() : rect();
+    const double visibleLeft = static_cast<double>(visibleRect.left());
+    const double visibleRight = static_cast<double>(visibleRect.right());
     
-    // Background
-    p.fillRect(rect(), ThemeManager::instance().backgroundColor());
+    // Background（可視領域のみ塗りつぶし）
+    p.fillRect(visibleRect, ThemeManager::instance().backgroundColor());
     
-    // Grid Lines (Vertical)
-    // ズームレベルに応じて細分化:
-    //   1拍(4分音符) = ppBeat px
-    //   8分音符 = ppBeat/2, 16分 = ppBeat/4, 32分 = ppBeat/8
-    // 各レベルの線は、そのピクセル幅が一定以上のとき描画する
-    const int MIN_SUBDIV_PX = 12; // この幅未満の細分化線は非表示
+    // Grid Lines (Vertical) — ビューポート内のみ描画
+    const int MIN_SUBDIV_PX = 12;
     
-    // 最も細かい分割数を決定（1拍あたり何本の線を引くか）
-    int subdivPerBeat = 1; // デフォルト: 4分音符のみ
-    if (ppBeat / 2 >= MIN_SUBDIV_PX)  subdivPerBeat = 2;  // 8分音符
-    if (ppBeat / 4 >= MIN_SUBDIV_PX)  subdivPerBeat = 4;  // 16分音符
-    if (ppBeat / 8 >= MIN_SUBDIV_PX)  subdivPerBeat = 8;  // 32分音符
+    int subdivPerBeat = 1;
+    if (ppBeat / 2 >= MIN_SUBDIV_PX)  subdivPerBeat = 2;
+    if (ppBeat / 4 >= MIN_SUBDIV_PX)  subdivPerBeat = 4;
+    if (ppBeat / 8 >= MIN_SUBDIV_PX)  subdivPerBeat = 8;
     
     int subdivsPerBar = BEATS_PER_BAR * subdivPerBeat;
+    double subdivWidth = ppBar / subdivsPerBar;
     
-    // 各線の位置を独立計算（累積誤差を防止してTimelineWidgetと一致させる）
-    int totalSubdivs = static_cast<int>(widgetWidth * subdivsPerBar / ppBar) + 1;
-    for (int idx = 0; idx <= totalSubdivs; ++idx) {
+    // 可視範囲の開始・終了インデックスを計算
+    int startIdx = qMax(0, static_cast<int>(visibleLeft / subdivWidth));
+    int endIdx = static_cast<int>(visibleRight / subdivWidth) + 1;
+    for (int idx = startIdx; idx <= endIdx; ++idx) {
         double x = idx * ppBar / subdivsPerBar;
         if (x >= widgetWidth) break;
         
         if (idx % subdivsPerBar == 0) {
-            // 小節線 — 最も濃い
             p.setPen(ThemeManager::instance().gridLineColor());
         } else if (idx % subdivPerBeat == 0) {
-            // 拍線（4分音符）
             p.setPen(ThemeManager::instance().gridLineSubColor());
         } else if (subdivPerBeat >= 4 && idx % (subdivPerBeat / 2) == 0) {
-            // 8分音符線
             p.setPen(ThemeManager::instance().gridLineSubBeatColor());
         } else {
-            // 16分/32分音符線 — 最も薄い
             p.setPen(ThemeManager::instance().gridLineTickColor());
         }
-        p.drawLine(QPointF(x, 0), QPointF(x, widgetHeight));
+        p.drawLine(QPointF(x, visibleRect.top()), QPointF(x, visibleRect.bottom()));
     }
     
-    // Grid Lines (Horizontal - Tracks)
-    QList<Track*> visTracks = m_project ? visibleTracks() : QList<Track*>();
-    for(int i = 0; i < numRows; ++i) {
+    // Grid Lines (Horizontal - Tracks) — ビューポート内の行のみ
+    int firstRowIdx = qMax(0, visibleRect.top() / rowHeight);
+    int lastRowIdx = qMin(numRows - 1, visibleRect.bottom() / rowHeight);
+    for (int i = firstRowIdx; i <= lastRowIdx; ++i) {
         double y = i * rowHeight + rowHeight;
-        
         p.setPen(ThemeManager::instance().gridLineSubColor());
-        p.drawLine(QPointF(0, y), QPointF(widgetWidth, y));
+        p.drawLine(QPointF(visibleLeft, y), QPointF(visibleRight, y));
     }
     
     // Clips
-    drawClips(p);
+    drawClips(p, visibleRect);
 
     // ── エクスポート範囲表示 ──
     if (m_project && m_project->exportStartBar() >= 0 && m_project->exportEndBar() > m_project->exportStartBar()) {
@@ -140,7 +136,7 @@ void ArrangementGridWidget::paintEvent(QPaintEvent *event)
     }
 }
 
-void ArrangementGridWidget::drawClips(QPainter& p)
+void ArrangementGridWidget::drawClips(QPainter& p, const QRect& visibleRect)
 {
     if (!m_project) return;
 
@@ -153,7 +149,7 @@ void ArrangementGridWidget::drawClips(QPainter& p)
         
         // フォルダトラック → 子トラックのクリップを統合表示
         if (track->isFolder()) {
-            drawFolderSummary(p, track, i * rowHeight, rowHeight);
+            drawFolderSummary(p, track, i * rowHeight, rowHeight, visibleRect);
             continue;
         }
         
@@ -181,6 +177,11 @@ void ArrangementGridWidget::drawClips(QPainter& p)
             }
             
             QRectF clipRect(x, drawY + 10, w, rowHeight - 20);
+
+            // 可視範囲外のクリップ描画をスキップ
+            if (clipRect.right() < visibleRect.left() || clipRect.left() > visibleRect.right()) {
+                continue;
+            }
             
             // アニメーション状態を取得
             float animScale = 1.0f;
@@ -352,7 +353,8 @@ void ArrangementGridWidget::drawClips(QPainter& p)
     }
 }
 
-void ArrangementGridWidget::drawFolderSummary(QPainter& p, Track* folder, int y, int rowHeight)
+void ArrangementGridWidget::drawFolderSummary(QPainter& p, Track* folder, int y, int rowHeight,
+                                              const QRect& visibleRect)
 {
     if (!m_project || !folder || !folder->isFolder()) return;
 
@@ -379,6 +381,11 @@ void ArrangementGridWidget::drawFolderSummary(QPainter& p, Track* folder, int y,
     double clipTop = y + 10.0;
     double clipH = rowHeight - 20.0;
     QRectF clipRect(clipX, clipTop, clipW, clipH);
+
+    // 可視範囲外なら描画しない
+    if (clipRect.right() < visibleRect.left() || clipRect.left() > visibleRect.right()) {
+        return;
+    }
 
     // フォルダカラーで統合クリップ背景を描画
     QColor folderColor = folder->color();
@@ -409,10 +416,18 @@ void ArrangementGridWidget::drawFolderSummary(QPainter& p, Track* folder, int y,
         p.setBrush(noteColor);
 
         for (Clip* clip : child->clips()) {
+            double childClipX = (clip->startTick() - minTick) * pixelsPerTick();
+            double childClipW = qMax(1.0, clip->durationTicks() * pixelsPerTick());
+            if (innerX + childClipX + childClipW < visibleRect.left() ||
+                innerX + childClipX > visibleRect.right()) {
+                continue;
+            }
+
             for (Note* note : clip->notes()) {
                 double noteX = innerX + (clip->startTick() + note->startTick()) * pixelsPerTick() - clipX;
                 double noteW = qMax(1.0, note->durationTicks() * pixelsPerTick());
                 if (noteX >= innerX + innerW || noteX + noteW <= innerX) continue;
+                if (noteX + noteW < visibleRect.left() || noteX > visibleRect.right()) continue;
 
                 double pitchRatio = 1.0 - (static_cast<double>(note->pitch()) / 127.0);
                 double noteH = qMax(2.0, innerH / 16.0);
