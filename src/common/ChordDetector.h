@@ -60,16 +60,18 @@ inline QVector<ChordPattern> patterns() {
  * @brief ピッチクラスのセットからコード名を検出する
  *
  * @param pitchClasses 0–11 のピッチクラスのセット
- * @return コード名（例 "Cmaj7", "Am"）。検出不可なら空文字列
+ * @param bassPitchClass 最低音のピッチクラス（指定するとルート判定の優先順位とスラッシュ表記に影響）
+ * @return コード名（例 "Cmaj7", "Am", "C/E"）。検出不可なら空文字列
  */
-inline QString detect(const QSet<int>& pitchClasses) {
+inline QString detect(const QSet<int>& pitchClasses, int bassPitchClass = -1) {
     // 1音以下、または全て同じ音名（オクターブ違い含む）→ 表示しない
     if (pitchClasses.size() <= 1) return QString();
 
     const auto& pats = patterns();
 
-    int bestScore = 0;
+    int bestScore = -9999;
     QString bestChord;
+    int bestMatchedRoot = -1;
 
     // 12個のルート候補それぞれについてマッチング
     for (int root = 0; root < 12; ++root) {
@@ -98,15 +100,31 @@ inline QString detect(const QSet<int>& pitchClasses) {
                 int score = pattern.intervals.size() * 100
                           - (pitchClasses.size() - pattern.intervals.size()) * 10;
 
+                // ベース音一致ボーナス (+50)
+                // これにより、aug などの対称的なコードでベース音をルートとする解釈を優先する
+                if (bassPitchClass >= 0 && root == bassPitchClass) {
+                    score += 50;
+                }
+
                 if (score > bestScore) {
                     bestScore = score;
+                    bestMatchedRoot = root;
                     bestChord = NOTE_NAMES[root] + pattern.suffix;
                 }
             }
         }
     }
 
-    return bestChord;
+    if (bestMatchedRoot >= 0) {
+        // スラッシュコード（オンコード）判定
+        // ベスト一致したルートと、実際の最低音が異なる場合に付与
+        if (bassPitchClass >= 0 && bestMatchedRoot != bassPitchClass) {
+            bestChord += "/" + NOTE_NAMES[bassPitchClass];
+        }
+        return bestChord;
+    }
+
+    return QString();
 }
 
 } // namespace ChordDetector

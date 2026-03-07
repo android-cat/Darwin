@@ -695,7 +695,7 @@ void TimelineWidget::rebuildChordCache()
     struct AbsNote {
         qint64 start;
         qint64 end;
-        int pitchClass;
+        int pitch;
     };
     QList<AbsNote> allNotes;
     for (Track* track : m_project->tracks()) {
@@ -704,7 +704,7 @@ void TimelineWidget::rebuildChordCache()
             for (Note* note : clip->notes()) {
                 qint64 absStart = clip->startTick() + note->startTick();
                 qint64 absEnd   = absStart + note->durationTicks();
-                allNotes.append({absStart, absEnd, note->pitch() % 12});
+                allNotes.append({absStart, absEnd, note->pitch()});
             }
         }
     }
@@ -728,13 +728,16 @@ void TimelineWidget::rebuildChordCache()
         if (segEnd <= segStart) continue;
 
         QSet<int> pitchClasses;
+        int minPitch = 128;
         for (const auto& n : allNotes) {
             if (n.start < segEnd && n.end > segStart) {
-                pitchClasses.insert(n.pitchClass);
+                pitchClasses.insert(n.pitch % 12);
+                if (n.pitch < minPitch) minPitch = n.pitch;
             }
         }
 
-        QString chordName = ChordDetector::detect(pitchClasses);
+        int bassPitchClass = (minPitch < 128) ? (minPitch % 12) : -1;
+        QString chordName = ChordDetector::detect(pitchClasses, bassPitchClass);
         if (chordName.isEmpty()) continue;
 
         if (!m_cachedChordSpans.isEmpty() && m_cachedChordSpans.last().name == chordName

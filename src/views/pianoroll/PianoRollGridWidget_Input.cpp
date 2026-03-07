@@ -225,12 +225,15 @@ void PianoRollGridWidget::mouseMoveEvent(QMouseEvent *event)
             qint64 hEnd   = hStart + hoveredNote->durationTicks();
 
             QSet<int> pitchClasses;
+            int minPitch = 128;
+
             // アクティブクリップのノート
             for (Note* note : m_activeClip->notes()) {
                 qint64 absStart = m_activeClip->startTick() + note->startTick();
                 qint64 absEnd   = absStart + note->durationTicks();
                 if (absStart < hEnd && absEnd > hStart) {
                     pitchClasses.insert(note->pitch() % 12);
+                    if (note->pitch() < minPitch) minPitch = note->pitch();
                 }
             }
             // 他トラックのゴーストノートも考慮
@@ -244,13 +247,15 @@ void PianoRollGridWidget::mouseMoveEvent(QMouseEvent *event)
                             qint64 absEnd   = absStart + note->durationTicks();
                             if (absStart < hEnd && absEnd > hStart) {
                                 pitchClasses.insert(note->pitch() % 12);
+                                if (note->pitch() < minPitch) minPitch = note->pitch();
                             }
                         }
                     }
                 }
             }
 
-            QString chordName = ChordDetector::detect(pitchClasses);
+            int bassPitchClass = (minPitch < 128) ? (minPitch % 12) : -1;
+            QString chordName = ChordDetector::detect(pitchClasses, bassPitchClass);
             if (!chordName.isEmpty()) {
                 QToolTip::showText(event->globalPosition().toPoint(), chordName, this);
             } else {
