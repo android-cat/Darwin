@@ -9,6 +9,7 @@
 #include <QMutexLocker>
 #include <algorithm>
 #include <cstring>
+#include <unordered_set>
 #include "common/ModelAccessLock.h"
 
 PlaybackController::PlaybackController(Project* project, QObject* parent)
@@ -33,10 +34,12 @@ PlaybackController::PlaybackController(Project* project, QObject* parent)
         m_audioEngine->start();
     }
 
-    // UI更新タイマー（60fps）— プレイヘッド位置・レベルメーター・プラグイン準備チェック
-    m_uiTimer->setInterval(16);
+    // 停止中は少し間引き、再生中だけ高頻度で更新する。
+    m_uiTimer->setInterval(UI_TIMER_INTERVAL_IDLE_MS);
     connect(m_uiTimer, &QTimer::timeout, this, &PlaybackController::onUiTimerTick);
     m_uiTimer->start(); // 常時稼働
+
+    connectProjectSignals(m_project);
 }
 
 PlaybackController::~PlaybackController()
@@ -49,8 +52,84 @@ PlaybackController::~PlaybackController()
 void PlaybackController::setProject(Project* project)
 {
     if (m_project != project) {
+        if (m_project) {
+            disconnect(m_project, nullptr, this, nullptr);
+        }
         stop();
         m_project = project;
+        connectProjectSignals(m_project);
+        m_routingCacheDirty.store(true);
+    }
+}
+
+void PlaybackController::connectProjectSignals(Project* project)
+{
+    if (!project) {
+        return;
+    }
+
+    auto invalidateRouting = [this]() {
+        m_routingCacheDirty.store(true);
+    };
+
+    connect(project, &Project::trackAdded, this, invalidateRouting);
+    connect(project, &Project::trackRemoved, this, invalidateRouting);
+    connect(project, &Project::trackOrderChanged, this, invalidateRouting);
+    connect(project, &Project::folderStructureChanged, this, invalidateRouting);
+}
+
+void PlaybackController::rebuildRoutingCacheLocked()
+{
+    // フォルダの深さ順とID索引を先に作り、オーディオコールバックでは再利用する。
+    m_trackByIdCache.clear();
+    m_sortedFolderTrackIndices.clear();
+
+    if (!m_project) {
+        m_folderBuses.clear();
+        return;
+    }
+
+    const auto& tracks = m_project->tracks();
+    std::unordered_set<int> activeFolderIds;
+    activeFolderIds.reserve(static_cast<size_t>(tracks.size()));
+
+    for (int ti = 0; ti < tracks.size(); ++ti) {
+        Track* track = tracks[ti];
+        if (!track) {
+            continue;
+        }
+
+        m_trackByIdCache[track->id()] = track;
+        if (track->isFolder()) {
+            m_sortedFolderTrackIndices.push_back(ti);
+            activeFolderIds.insert(track->id());
+        }
+    }
+
+    auto depthForTrack = [this](Track* track) {
+        int depth = 0;
+        for (int folderId = track ? track->parentFolderId() : -1; folderId >= 0; ) {
+            auto it = m_trackByIdCache.find(folderId);
+            if (it == m_trackByIdCache.end() || !it->second) {
+                break;
+            }
+            ++depth;
+            folderId = it->second->parentFolderId();
+        }
+        return depth;
+    };
+
+    std::sort(m_sortedFolderTrackIndices.begin(), m_sortedFolderTrackIndices.end(),
+              [&tracks, &depthForTrack](int lhs, int rhs) {
+                  return depthForTrack(tracks[lhs]) > depthForTrack(tracks[rhs]);
+              });
+
+    for (auto it = m_folderBuses.begin(); it != m_folderBuses.end(); ) {
+        if (activeFolderIds.find(it->first) == activeFolderIds.end()) {
+            it = m_folderBuses.erase(it);
+        } else {
+            ++it;
+        }
     }
 }
 
@@ -83,6 +162,8 @@ void PlaybackController::play()
     m_activeNotes.clear();
     
     m_isPlaying.store(true);
+    m_idleMaintenanceTick = 0;
+    updateUiTimerInterval();
 
     // AudioEngineが何らかの理由で停止している場合は再開始
     if (!m_audioEngine->isRunning()) {
@@ -109,6 +190,8 @@ void PlaybackController::pause()
     m_isPlaying.store(false);
     // AudioEngineは停止しない（プラグインGUIプレビューの音を処理し続けるため）
     m_activeNotes.clear();
+    m_idleMaintenanceTick = 0;
+    updateUiTimerInterval();
 
     emit playStateChanged(false);
 }
@@ -120,6 +203,8 @@ void PlaybackController::stop()
     m_isPlaying.store(false);
     // AudioEngineは停止しない（プラグインGUIプレビューの音を処理し続けるため）
     m_activeNotes.clear();
+    m_idleMaintenanceTick = 0;
+    updateUiTimerInterval();
 
     if (m_project) {
         m_playPositionTicks.store(0.0);
@@ -152,6 +237,18 @@ void PlaybackController::seekTo(qint64 tickPosition)
     m_activeNotes.clear();
 }
 
+void PlaybackController::updateUiTimerInterval()
+{
+    if (!m_uiTimer) {
+        return;
+    }
+
+    const int interval = m_isPlaying.load() ? UI_TIMER_INTERVAL_PLAYING_MS : UI_TIMER_INTERVAL_IDLE_MS;
+    if (m_uiTimer->interval() != interval) {
+        m_uiTimer->setInterval(interval);
+    }
+}
+
 void PlaybackController::suspendForExport()
 {
     // 再生中なら停止
@@ -178,6 +275,7 @@ void PlaybackController::resumeFromExport()
             m_audioEngine->start();
         }
         // UIタイマーを再開
+        updateUiTimerInterval();
         m_uiTimer->start();
         qDebug() << "PlaybackController: エクスポートから復帰";
     });
@@ -187,11 +285,17 @@ void PlaybackController::onUiTimerTick()
 {
     if (!m_project) return;
 
-    // ロード済みで未準備のプラグインを自動的に準備（GUIプレビュー対応）
-    ensurePluginsPrepared();
+    const bool isPlaying = m_isPlaying.load();
+    // 停止中は重い保守処理を毎回は走らせず、数tickごとにまとめて行う。
+    const bool shouldRunMaintenance =
+        isPlaying || (++m_idleMaintenanceTick >= IDLE_MAINTENANCE_INTERVAL_TICKS);
+    if (shouldRunMaintenance) {
+        m_idleMaintenanceTick = 0;
+        ensurePluginsPrepared();
+    }
 
     // 再生中のみプレイヘッド位置を更新
-    if (m_isPlaying.load()) {
+    if (isPlaying) {
         qint64 pos = static_cast<qint64>(m_playPositionTicks.load());
         m_project->setPlayheadPosition(pos);
         emit positionChanged(pos);
@@ -211,29 +315,31 @@ void PlaybackController::onUiTimerTick()
         }
     }
 
-    // プラグインからのリスタート要求をチェック
-    for (Track* track : m_project->tracks()) {
-        bool requiresRestart = false;
-        if (track->hasPlugin() && track->pluginInstance()->isLoaded()) {
-            if (track->pluginInstance()->consumeRestartFlags() != 0) {
-                requiresRestart = true;
-            }
-        }
-        if (!requiresRestart) {
-            for (VST3PluginInstance* fx : track->fxPlugins()) {
-                if (fx && fx->isLoaded() && fx->consumeRestartFlags() != 0) {
+    if (shouldRunMaintenance) {
+        // プラグインからのリスタート要求も同じ保守タイミングでまとめて確認する。
+        for (Track* track : m_project->tracks()) {
+            bool requiresRestart = false;
+            if (track->hasPlugin() && track->pluginInstance()->isLoaded()) {
+                if (track->pluginInstance()->consumeRestartFlags() != 0) {
                     requiresRestart = true;
-                    break;
                 }
             }
-        }
-        
-        if (requiresRestart) {
-            qDebug() << "PlaybackController: Plugin restart required from track:" << track->name();
-            // リスタート要求で強制的に先頭に戻すのは、UIスレッドをブロックする危険があるため行わない
-            // VSTパラメータ名等のGUI更新要求はフラグ消費で完了とする
-            // seekTo(0);
-            break;
+            if (!requiresRestart) {
+                for (VST3PluginInstance* fx : track->fxPlugins()) {
+                    if (fx && fx->isLoaded() && fx->consumeRestartFlags() != 0) {
+                        requiresRestart = true;
+                        break;
+                    }
+                }
+            }
+            
+            if (requiresRestart) {
+                qDebug() << "PlaybackController: Plugin restart required from track:" << track->name();
+                // リスタート要求で強制的に先頭に戻すのは、UIスレッドをブロックする危険があるため行わない
+                // VSTパラメータ名等のGUI更新要求はフラグ消費で完了とする
+                // seekTo(0);
+                break;
+            }
         }
     }
 }
@@ -271,6 +377,10 @@ void PlaybackController::audioRenderCallback(float* outputBuffer, int numFrames,
 
     // 各トラックを処理
     const auto& tracks = m_project->tracks();
+
+    if (m_routingCacheDirty.exchange(false)) {
+        rebuildRoutingCacheLocked();
+    }
     
     // トランスポート情報を構築（全トラック共通）
     VST3PluginInstance::TransportInfo transport {};
@@ -445,16 +555,20 @@ void PlaybackController::audioRenderCallback(float* outputBuffer, int numFrames,
             // インストゥルメントプラグインでオーディオ処理
             // オーディオクリップがある場合は一時バッファを使いミックスする
             if (hasAudioClips) {
-                std::vector<float> pluginBufL(numFrames, 0.0f);
-                std::vector<float> pluginBufR(numFrames, 0.0f);
+                if (static_cast<int>(m_pluginBufL.size()) < numFrames) {
+                    m_pluginBufL.resize(numFrames);
+                    m_pluginBufR.resize(numFrames);
+                }
+                memset(m_pluginBufL.data(), 0, numFrames * sizeof(float));
+                memset(m_pluginBufR.data(), 0, numFrames * sizeof(float));
                 track->pluginInstance()->processAudio(
-                    nullptr, nullptr, pluginBufL.data(), pluginBufR.data(),
+                    nullptr, nullptr, m_pluginBufL.data(), m_pluginBufR.data(),
                     numFrames, trackEvents, transport);
 
                 // プラグイン出力をオーディオクリップ出力にミックス
                 for (int i = 0; i < numFrames; ++i) {
-                    m_trackBufL[i] += pluginBufL[i];
-                    m_trackBufR[i] += pluginBufR[i];
+                    m_trackBufL[i] += m_pluginBufL[i];
+                    m_trackBufR[i] += m_pluginBufR[i];
                 }
             } else {
                 track->pluginInstance()->processAudio(
@@ -519,25 +633,7 @@ void PlaybackController::audioRenderCallback(float* outputBuffer, int numFrames,
 
     // ── Phase 2: フォルダトラックの処理（深いフォルダから順に） ──
     // フォルダバスにFXを適用 → ボリューム/パン → 親フォルダバスまたはマスターバスへ
-    std::vector<std::pair<int, int>> foldersByDepth; // (depth, trackIndex)
-    for (int ti = 0; ti < tracks.size(); ++ti) {
-        if (tracks[ti]->isFolder()) {
-            // 深さを計算（parentFolderIdを辿る）
-            int depth = 0;
-            int fid = tracks[ti]->parentFolderId();
-            while (fid >= 0) {
-                depth++;
-                Track* parent = m_project->trackById(fid);
-                fid = parent ? parent->parentFolderId() : -1;
-            }
-            foldersByDepth.push_back({depth, ti});
-        }
-    }
-    // 深い順にソート
-    std::sort(foldersByDepth.begin(), foldersByDepth.end(),
-              [](const auto& a, const auto& b) { return a.first > b.first; });
-
-    for (auto& [depth, ti] : foldersByDepth) {
+    for (int ti : m_sortedFolderTrackIndices) {
         Track* folder = tracks[ti];
         auto busIt = m_folderBuses.find(folder->id());
         if (busIt == m_folderBuses.end()) continue;
@@ -623,10 +719,20 @@ void PlaybackController::audioRenderCallback(float* outputBuffer, int numFrames,
         }
     }
 
+    // マスターボリューム・パンの適用
+    double masterVol = 1.0;
+    double masterPan = 0.0;
+    if (m_project && m_project->masterTrack()) {
+        masterVol = m_project->masterTrack()->volume();
+        masterPan = m_project->masterTrack()->pan();
+    }
+    float masterGainL = static_cast<float>(masterVol * std::min(1.0, 1.0 - masterPan));
+    float masterGainR = static_cast<float>(masterVol * std::min(1.0, 1.0 + masterPan));
+
     if (numChannels >= 2) {
         for (int i = 0; i < numFrames; ++i) {
-            float outL = m_mixBufL[i];
-            float outR = m_mixBufR[i];
+            float outL = m_mixBufL[i] * masterGainL;
+            float outR = m_mixBufR[i] * masterGainR;
             
             outputBuffer[i * numChannels + 0] = outL;
             outputBuffer[i * numChannels + 1] = outR;
@@ -638,7 +744,7 @@ void PlaybackController::audioRenderCallback(float* outputBuffer, int numFrames,
     } else if (numChannels == 1) {
         // モノラル: L+Rの平均
         for (int i = 0; i < numFrames; ++i) {
-            float outM = (m_mixBufL[i] + m_mixBufR[i]) * 0.5f;
+            float outM = (m_mixBufL[i] * masterGainL + m_mixBufR[i] * masterGainR) * 0.5f;
             outputBuffer[i] = outM;
             currentPeakL = std::max(currentPeakL, std::abs(outM));
             currentPeakR = currentPeakL;

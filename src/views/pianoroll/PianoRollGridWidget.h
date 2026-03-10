@@ -2,6 +2,9 @@
 #include <QWidget>
 #include <QTimer>
 #include <QMap>
+#include <QHash>
+#include <QSet>
+#include <QVector>
 #include <QPointer>
 #include <QElapsedTimer>
 #include "common/BurstAnimationHelper.h"
@@ -49,6 +52,12 @@ private:
     /** tickをグリッドにスナップ（Project::gridSnapEnabled チェック付き） */
     qint64 snapTick(qint64 tick) const;
     int computeRequiredWidth() const;
+    /** 全クリップの末端tick。再生中の全走査を避けるためにキャッシュする。 */
+    qint64 maxContentTick() const;
+    bool updateContentWidthCacheForClip(Clip* clip);
+    void removeClipFromContentWidthCache(Clip* clip);
+    void rebuildGhostNoteCache() const;
+    void invalidateGhostNoteCache() { m_ghostNoteCacheDirty = true; }
     void updateDynamicSize();
     void ensurePlayheadVisible();
     
@@ -91,13 +100,32 @@ private:
     QElapsedTimer m_animClock;
     QTimer m_animTimer;
     Note* m_prevSelectedNote;
+    // 幅計算に必要なクリップ末端だけを保持し、プレイヘッド更新時の負荷を抑える。
+    mutable QHash<int, qint64> m_clipEndTickCache;
+    mutable qint64 m_cachedMaxContentTick = 0;
+    mutable bool m_contentWidthCacheDirty = true;
+    struct GhostNoteCacheEntry {
+        int clipId = -1;
+        qint64 startTick = 0;
+        qint64 durationTicks = 0;
+        int row = 0;
+        QColor fillColor;
+        QColor borderColor;
+    };
+    // ゴーストノートはフラットな配列にしておき、可視範囲近傍だけ走査する。
+    mutable QVector<GhostNoteCacheEntry> m_ghostNoteCache;
+    mutable qint64 m_maxGhostNoteDurationTicks = 0;
+    mutable bool m_ghostNoteCacheDirty = true;
 
     // バースト共通エンジン
     QList<BurstAnimation::BurstGhost> m_burstGhosts;
     QList<BurstAnimation::Particle>   m_particles;
+    // バースト削除したノートは、noteRemoved 側でフェードアウトを重ねないように一時記録する。
+    QSet<Note*> m_notesPendingBurstRemoval;
 
     void startNoteAnim(Note* note, NoteAnim::Type type);
     void startBurstAnim(const QRectF& rect, const QColor& color);
+    void markNoteForBurstRemoval(Note* note);
     void tickAnimations();
     void drawBurstEffects(QPainter& p);
     

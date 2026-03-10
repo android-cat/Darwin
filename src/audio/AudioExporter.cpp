@@ -102,6 +102,49 @@ bool AudioExporter::exportToWav(Project* project, const QString& filePath,
     std::vector<float> mixBufR(blockSize, 0.0f);
     std::vector<float> trackBufL(blockSize, 0.0f);
     std::vector<float> trackBufR(blockSize, 0.0f);
+    std::vector<float> pluginBufL(blockSize, 0.0f);
+    std::vector<float> pluginBufR(blockSize, 0.0f);
+
+    struct FolderBus {
+        std::vector<float> bufL;
+        std::vector<float> bufR;
+    };
+    std::unordered_map<int, FolderBus> folderBuses;
+    std::unordered_map<int, Track*> trackById;
+    std::vector<int> sortedFolderTrackIndices;
+
+    const auto& tracks = project->tracks();
+    sortedFolderTrackIndices.reserve(static_cast<size_t>(tracks.size()));
+
+    for (int ti = 0; ti < tracks.size(); ++ti) {
+        Track* track = tracks[ti];
+        if (!track) {
+            continue;
+        }
+
+        trackById[track->id()] = track;
+        if (track->isFolder()) {
+            sortedFolderTrackIndices.push_back(ti);
+        }
+    }
+
+    auto depthForTrack = [&trackById](Track* track) {
+        int depth = 0;
+        for (int folderId = track ? track->parentFolderId() : -1; folderId >= 0; ) {
+            auto it = trackById.find(folderId);
+            if (it == trackById.end() || !it->second) {
+                break;
+            }
+            ++depth;
+            folderId = it->second->parentFolderId();
+        }
+        return depth;
+    };
+
+    std::sort(sortedFolderTrackIndices.begin(), sortedFolderTrackIndices.end(),
+              [&tracks, &depthForTrack](int lhs, int rhs) {
+                  return depthForTrack(tracks[lhs]) > depthForTrack(tracks[rhs]);
+              });
 
     // アクティブノート追跡
     struct ActiveNote {
@@ -130,15 +173,7 @@ bool AudioExporter::exportToWav(Project* project, const QString& filePath,
         transport.timeSigDenominator = 4;
         transport.ticksPerBeat = Project::TICKS_PER_BEAT;
 
-        const auto& tracks = project->tracks();
-
         // ── フォルダバスの初期化 ──
-        struct FolderBus {
-            std::vector<float> bufL;
-            std::vector<float> bufR;
-        };
-        // static で再利用（毎ブロック再確保を防ぐ）
-        static std::unordered_map<int, FolderBus> folderBuses;
         for (int ti = 0; ti < tracks.size(); ++ti) {
             Track* t = tracks[ti];
             if (t->isFolder()) {
@@ -285,8 +320,12 @@ bool AudioExporter::exportToWav(Project* project, const QString& filePath,
 
                 // プラグイン処理（オーディオクリップがある場合は一時バッファを使いミックス）
                 if (hasAudioClips) {
-                    std::vector<float> pluginBufL(framesToProcess, 0.0f);
-                    std::vector<float> pluginBufR(framesToProcess, 0.0f);
+                    if (static_cast<int>(pluginBufL.size()) < framesToProcess) {
+                        pluginBufL.resize(framesToProcess);
+                        pluginBufR.resize(framesToProcess);
+                    }
+                    memset(pluginBufL.data(), 0, framesToProcess * sizeof(float));
+                    memset(pluginBufR.data(), 0, framesToProcess * sizeof(float));
                     track->pluginInstance()->processAudio(
                         nullptr, nullptr, pluginBufL.data(), pluginBufR.data(),
                         framesToProcess, trackEvents, transport);
@@ -335,23 +374,7 @@ bool AudioExporter::exportToWav(Project* project, const QString& filePath,
         }
 
         // ── Phase 2: フォルダトラックの処理（深いフォルダから順に） ──
-        std::vector<std::pair<int, int>> foldersByDepth;
-        for (int ti = 0; ti < tracks.size(); ++ti) {
-            if (tracks[ti]->isFolder()) {
-                int depth = 0;
-                int fid = tracks[ti]->parentFolderId();
-                while (fid >= 0) {
-                    depth++;
-                    Track* parent = project->trackById(fid);
-                    fid = parent ? parent->parentFolderId() : -1;
-                }
-                foldersByDepth.push_back({depth, ti});
-            }
-        }
-        std::sort(foldersByDepth.begin(), foldersByDepth.end(),
-                  [](const auto& a, const auto& b) { return a.first > b.first; });
-
-        for (auto& [depth, ti] : foldersByDepth) {
+        for (int ti : sortedFolderTrackIndices) {
             Track* folder = tracks[ti];
             auto busIt = folderBuses.find(folder->id());
             if (busIt == folderBuses.end()) continue;

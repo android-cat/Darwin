@@ -9,6 +9,9 @@
 #include <QJsonArray>
 #include <QTimer>
 #include <QMap>
+#include <QHash>
+#include <QImage>
+#include <QVector>
 #include <QPointer>
 #include <QElapsedTimer>
 #include "common/BurstAnimationHelper.h"
@@ -64,6 +67,8 @@ protected:
     void dropEvent(QDropEvent *event) override;
     
 private:
+    struct FolderSummaryCacheEntry;
+
     void drawClips(QPainter& p, const QRect& visibleRect);
     void drawFolderSummary(QPainter& p, Track* folder, int y, int rowHeight,
                            const QRect& visibleRect);
@@ -73,14 +78,58 @@ private:
     void handleAudioFileDrop(const QString& filePath, const QPoint& dropPos);
     
     /** 現在表示中の（フォルダ折りたたみで隠されていない）トラック一覧 */
-    QList<Track*> visibleTracks() const;
+    const QList<Track*>& visibleTracks() const;
     /** 可視トラック内でのインデックスを返す (-1 = 非表示) */
     int visibleTrackIndex(Track* track) const;
+    /** 全クリップの末端tick。再生ヘッド更新ごとの全走査を避けるためにキャッシュする。 */
+    qint64 maxContentTick() const;
+    /** 右方向への拡張だけならインクリメンタルに更新し、全再計算を避ける。 */
+    bool updateContentWidthCacheForClip(Clip* clip);
+    void removeClipFromContentWidthCache(Clip* clip);
+    const FolderSummaryCacheEntry* folderSummaryCacheForTrack(Track* folder) const;
+    void rebuildFolderSummaryCache() const;
     
     /** 可視トラックキャッシュ（フォルダ構造変更・トラック追加削除時にのみ再構築） */
     mutable QList<Track*> m_cachedVisibleTracks;
     mutable bool m_visibleTracksCacheDirty = true;
     void invalidateVisibleTracksCache() { m_visibleTracksCacheDirty = true; }
+    mutable QHash<int, qint64> m_clipEndTickCache;
+    mutable qint64 m_cachedMaxContentTick = 0;
+    mutable bool m_contentWidthCacheDirty = true;
+    void invalidateContentWidthCache() { m_contentWidthCacheDirty = true; }
+    struct WaveformCacheEntry {
+        int width = 0;
+        int height = 0;
+        QRgb color = 0;
+        QImage image;
+    };
+    // 波形はズーム中に同じ見た目で何度も描かれるので、最後に使った画像をクリップ単位で保持する。
+    mutable QHash<int, WaveformCacheEntry> m_waveformCache;
+    struct FolderSummaryNoteEntry {
+        qint64 startTick = 0;
+        qint64 durationTicks = 0;
+        int pitch = 0;
+        QColor color;
+    };
+    struct FolderSummaryClipEntry {
+        qint64 startTick = 0;
+        qint64 endTick = 0;
+        QVector<FolderSummaryNoteEntry> notes;
+    };
+    struct FolderSummaryCacheEntry {
+        bool hasAnyClip = false;
+        qint64 minTick = 0;
+        qint64 maxTick = 0;
+        QVector<FolderSummaryClipEntry> clips;
+    };
+    // フォルダ要約は子孫探索とクリップ集計が重いため、描画用データをフォルダ単位で保持する。
+    mutable QHash<int, FolderSummaryCacheEntry> m_folderSummaryCache;
+    mutable bool m_folderSummaryCacheDirty = true;
+    void invalidateFolderSummaryCache()
+    {
+        m_folderSummaryCacheDirty = true;
+        m_folderSummaryCache.clear();
+    }
     
     qint64 m_playheadPosition;
     bool m_isPlaying = false;

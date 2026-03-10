@@ -7,6 +7,7 @@
 #include "Note.h"
 #include "Project.h"
 #include "Track.h"
+#include <algorithm>
 #include <QPaintEvent>
 #include <QPainter>
 #include <QPainter>
@@ -123,42 +124,39 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
         p.fillRect(visibleRect, QColor(0, 0, 0, ThemeManager::instance().isDarkMode() ? 80 : 30));
     }
     
-    // 表示中の全トラックのノートを描画（アクティブクリップ以外はゴーストノートとして）
-    // Antialiasing は一括で有効のまま — ループ内での切り替えは高コストなので避ける
+    // ゴーストノートは事前に平坦化したキャッシュから、可視範囲近傍の要素だけ描画する。
     if (m_project) {
-        for (Track* track : m_project->tracks()) {
-            if (!track->isVisible()) continue;
-            
-            QColor trackColor = track->color();
-            QColor ghostColor = trackColor;
-            ghostColor.setAlpha(60);
-            QColor ghostBorder = trackColor;
-            ghostBorder.setAlpha(90);
-            QPen ghostPen(ghostBorder, 1);
-            
-            for (Clip* clip : track->clips()) {
-                if (clip == m_activeClip) continue;
+        if (m_ghostNoteCacheDirty) {
+            rebuildGhostNoteCache();
+        }
 
-                double clipLeft = clip->startTick() * ppt;
-                double clipRight = clip->endTick() * ppt;
-                if (clipRight < visibleLeft || clipLeft > visibleRight) continue;
-                
-                for (Note* note : clip->notes()) {
-                    double x = (clip->startTick() + note->startTick()) * ppt;
-                    double w = note->durationTicks() * ppt;
-                    if (x + w < visibleLeft || x > visibleRight) continue;
-                    int row = pitchToRow(note->pitch());
-                    int noteTop = row * ROW_HEIGHT;
-                    if (noteTop + ROW_HEIGHT < visibleTop || noteTop > visibleBottom) continue;
-                    double y = noteTop;
-                    
-                    QRectF noteRect(x, y + 2, qMax(4.0, w), ROW_HEIGHT - 4);
-                    
-                    p.setPen(ghostPen);
-                    p.setBrush(ghostColor);
-                    p.drawRoundedRect(noteRect, 2, 2);
-                }
-            }
+        const int activeClipId = m_activeClip ? m_activeClip->id() : -1;
+        const qint64 visibleStartTick = qMax<qint64>(0, static_cast<qint64>(visibleLeft / ppt));
+        const qint64 visibleEndTick = static_cast<qint64>(visibleRight / ppt) + 1;
+        const qint64 searchStartTick = qMax<qint64>(0, visibleStartTick - m_maxGhostNoteDurationTicks);
+
+        auto it = std::lower_bound(
+            m_ghostNoteCache.begin(), m_ghostNoteCache.end(), searchStartTick,
+            [](const GhostNoteCacheEntry& entry, qint64 tick) {
+                return entry.startTick < tick;
+            });
+
+        for (; it != m_ghostNoteCache.end() && it->startTick <= visibleEndTick; ++it) {
+            if (it->clipId == activeClipId) continue;
+
+            const qint64 noteEndTick = it->startTick + it->durationTicks;
+            if (noteEndTick < visibleStartTick) continue;
+
+            int noteTop = it->row * ROW_HEIGHT;
+            if (noteTop + ROW_HEIGHT < visibleTop || noteTop > visibleBottom) continue;
+
+            double x = it->startTick * ppt;
+            double w = it->durationTicks * ppt;
+            QRectF noteRect(x, noteTop + 2, qMax(4.0, w), ROW_HEIGHT - 4);
+
+            p.setPen(QPen(it->borderColor, 1));
+            p.setBrush(it->fillColor);
+            p.drawRoundedRect(noteRect, 2, 2);
         }
     }
     

@@ -98,7 +98,7 @@ void Track::setSolo(bool solo)
 
 void Track::setVolume(double volume)
 {
-    volume = qBound(0.0, volume, 1.0);
+    volume = qMax(0.0, volume);
     if (!qFuzzyCompare(m_volume, volume)) {
         m_volume = volume;
         emit propertyChanged();

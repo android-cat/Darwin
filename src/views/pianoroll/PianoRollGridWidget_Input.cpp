@@ -400,6 +400,7 @@ void PianoRollGridWidget::mouseDoubleClickEvent(QMouseEvent *event)
             Track* parentTrack = qobject_cast<Track*>(m_activeClip->parent());
             if (parentTrack) baseColor = parentTrack->color();
             startBurstAnim(QRectF(noteRect), baseColor);
+            markNoteForBurstRemoval(note);
             
             if (m_undoStack) {
                 m_undoStack->push(new RemoveNoteCommand(m_activeClip, note));
@@ -467,6 +468,7 @@ void PianoRollGridWidget::keyPressEvent(QKeyEvent *event)
             int y = pitchToRow(note->pitch()) * ROW_HEIGHT;
             QRect noteRect(x, y + 2, qMax(4, w), ROW_HEIGHT - 4);
             startBurstAnim(QRectF(noteRect), baseColor);
+            markNoteForBurstRemoval(note);
             m_activeClip->removeNote(note);
         }
         m_selectedNote = nullptr;
@@ -584,6 +586,7 @@ void PianoRollGridWidget::keyPressEvent(QKeyEvent *event)
                 int ny = pitchToRow(note->pitch()) * ROW_HEIGHT;
                 QRect noteRect(nx, ny + 2, qMax(4, nw), ROW_HEIGHT - 4);
                 startBurstAnim(QRectF(noteRect), baseColor);
+                markNoteForBurstRemoval(note);
                 if (m_undoStack) {
                     m_undoStack->push(new RemoveNoteCommand(m_activeClip, note));
                 } else {

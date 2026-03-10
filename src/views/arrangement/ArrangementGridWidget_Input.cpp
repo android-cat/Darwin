@@ -290,6 +290,7 @@ void ArrangementGridWidget::mouseMoveEvent(QMouseEvent *event)
 void ArrangementGridWidget::mouseReleaseEvent(QMouseEvent *event)
 {
     Q_UNUSED(event)
+    const bool hadClipTransform = m_isDragging || m_isResizing || m_isResizingLeft;
 
     // 長押しタイマーをキャンセル
     m_longPressTimer.stop();
@@ -387,6 +388,10 @@ void ArrangementGridWidget::mouseReleaseEvent(QMouseEvent *event)
         m_isRubberBanding = false;
         m_rubberBandRect = QRect();
         update();
+    }
+
+    if (hadClipTransform) {
+        updateDynamicSize();
     }
 }
 

@@ -141,7 +141,7 @@ void ArrangementGridWidget::drawClips(QPainter& p, const QRect& visibleRect)
     if (!m_project) return;
 
     int rowHeight = 100;
-    QList<Track*> visTracks = visibleTracks();
+    const QList<Track*>& visTracks = visibleTracks();
     
     for (int i = 0; i < visTracks.size(); ++i) {
         Track* track = visTracks.at(i);
@@ -358,26 +358,12 @@ void ArrangementGridWidget::drawFolderSummary(QPainter& p, Track* folder, int y,
 {
     if (!m_project || !folder || !folder->isFolder()) return;
 
-    QList<Track*> children = m_project->folderDescendants(folder);
-    if (children.isEmpty()) return;
-
-    // 全子トラックのクリップから統合範囲を算出
-    qint64 minTick = std::numeric_limits<qint64>::max();
-    qint64 maxTick = 0;
-    bool hasAnyClip = false;
-
-    for (Track* child : children) {
-        for (Clip* clip : child->clips()) {
-            if (clip->startTick() < minTick) minTick = clip->startTick();
-            if (clip->endTick() > maxTick) maxTick = clip->endTick();
-            hasAnyClip = true;
-        }
-    }
-    if (!hasAnyClip) return;
+    const FolderSummaryCacheEntry* cache = folderSummaryCacheForTrack(folder);
+    if (!cache || !cache->hasAnyClip) return;
 
     // 統合クリップの矩形
-    double clipX = minTick * pixelsPerTick();
-    double clipW = qMax(4.0, (maxTick - minTick) * pixelsPerTick());
+    double clipX = cache->minTick * pixelsPerTick();
+    double clipW = qMax(4.0, (cache->maxTick - cache->minTick) * pixelsPerTick());
     double clipTop = y + 10.0;
     double clipH = rowHeight - 20.0;
     QRectF clipRect(clipX, clipTop, clipW, clipH);
@@ -410,31 +396,27 @@ void ArrangementGridWidget::drawFolderSummary(QPainter& p, Track* folder, int y,
     p.setClipRect(QRectF(innerX, innerY, innerW, innerH).toAlignedRect());
     p.setPen(Qt::NoPen);
 
-    for (Track* child : children) {
-        QColor noteColor = child->color().darker(110);
-        noteColor.setAlpha(180);
-        p.setBrush(noteColor);
+    for (const FolderSummaryClipEntry& clipEntry : cache->clips) {
+        double childClipX = (clipEntry.startTick - cache->minTick) * pixelsPerTick();
+        double childClipW = qMax(1.0, (clipEntry.endTick - clipEntry.startTick) * pixelsPerTick());
+        if (innerX + childClipX + childClipW < visibleRect.left() ||
+            innerX + childClipX > visibleRect.right()) {
+            continue;
+        }
 
-        for (Clip* clip : child->clips()) {
-            double childClipX = (clip->startTick() - minTick) * pixelsPerTick();
-            double childClipW = qMax(1.0, clip->durationTicks() * pixelsPerTick());
-            if (innerX + childClipX + childClipW < visibleRect.left() ||
-                innerX + childClipX > visibleRect.right()) {
-                continue;
-            }
+        for (const FolderSummaryNoteEntry& noteEntry : clipEntry.notes) {
+            p.setBrush(noteEntry.color);
 
-            for (Note* note : clip->notes()) {
-                double noteX = innerX + (clip->startTick() + note->startTick()) * pixelsPerTick() - clipX;
-                double noteW = qMax(1.0, note->durationTicks() * pixelsPerTick());
-                if (noteX >= innerX + innerW || noteX + noteW <= innerX) continue;
-                if (noteX + noteW < visibleRect.left() || noteX > visibleRect.right()) continue;
+            double noteX = innerX + (noteEntry.startTick - cache->minTick) * pixelsPerTick();
+            double noteW = qMax(1.0, noteEntry.durationTicks * pixelsPerTick());
+            if (noteX >= innerX + innerW || noteX + noteW <= innerX) continue;
+            if (noteX + noteW < visibleRect.left() || noteX > visibleRect.right()) continue;
 
-                double pitchRatio = 1.0 - (static_cast<double>(note->pitch()) / 127.0);
-                double noteH = qMax(2.0, innerH / 16.0);
-                double noteY = innerY + pitchRatio * (innerH - noteH);
+            double pitchRatio = 1.0 - (static_cast<double>(noteEntry.pitch) / 127.0);
+            double noteH = qMax(2.0, innerH / 16.0);
+            double noteY = innerY + pitchRatio * (innerH - noteH);
 
-                p.drawRect(QRectF(noteX, noteY, noteW, noteH));
-            }
+            p.drawRect(QRectF(noteX, noteY, noteW, noteH));
         }
     }
 
@@ -455,31 +437,35 @@ void ArrangementGridWidget::drawAudioWaveform(QPainter& p, const QRectF& clipRec
     double clipH = clipRect.height() - 4.0;
     if (clipW <= 0 || clipH <= 0) return;
 
-    double centerY = clipY + clipH / 2.0;
-    double halfHeight = clipH / 2.0;
+    const int pixelWidth = qMax(1, static_cast<int>(clipW));
+    const int pixelHeight = qMax(1, static_cast<int>(clipH));
+    const QRgb colorKey = waveColor.rgba();
 
-    p.save();
-    p.setClipRect(QRectF(clipX, clipY, clipW, clipH).toAlignedRect());
-    p.setRenderHint(QPainter::Antialiasing, true);
-    p.setPen(Qt::NoPen);
-    p.setBrush(waveColor);
+    auto& cache = m_waveformCache[clip->id()];
+    if (cache.width != pixelWidth || cache.height != pixelHeight ||
+        cache.color != colorKey || cache.image.isNull()) {
+        // 波形の棒グラフを画像として保持し、通常の再描画では drawImage だけで済ませる。
+        cache.width = pixelWidth;
+        cache.height = pixelHeight;
+        cache.color = colorKey;
+        cache.image = QImage(pixelWidth, pixelHeight, QImage::Format_ARGB32_Premultiplied);
+        cache.image.fill(Qt::transparent);
 
-    // プレビューデータからクリップ幅に合わせて描画
-    int previewSize = preview.size();
-    // 描画する棒の数は幅から決定
-    int steps = static_cast<int>(clipW);
-    for (int px = 0; px < steps; ++px) {
-        // ピクセル位置 → プレビューインデックス
-        int idx = static_cast<int>(static_cast<qint64>(px) * previewSize / steps);
-        idx = qBound(0, idx, previewSize - 1);
+        QPainter cachePainter(&cache.image);
+        cachePainter.setPen(Qt::NoPen);
+        cachePainter.setBrush(waveColor);
 
-        float peak = preview[idx];
-        double barH = peak * halfHeight;
-        if (barH < 1.0) barH = 1.0;
+        const int previewSize = preview.size();
+        const double centerY = pixelHeight / 2.0;
+        const double halfHeight = pixelHeight / 2.0;
+        for (int px = 0; px < pixelWidth; ++px) {
+            int idx = static_cast<int>(static_cast<qint64>(px) * previewSize / pixelWidth);
+            idx = qBound(0, idx, previewSize - 1);
 
-        // 中央から上下対称に描画
-        p.drawRect(QRectF(clipX + px, centerY - barH, 1.0, barH * 2.0));
+            double barH = qMax(1.0, preview[idx] * halfHeight);
+            cachePainter.drawRect(QRectF(px, centerY - barH, 1.0, barH * 2.0));
+        }
     }
 
-    p.restore();
+    p.drawImage(QPointF(clipX, clipY), cache.image);
 }

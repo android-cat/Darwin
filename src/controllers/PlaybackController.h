@@ -4,6 +4,7 @@
 #include <QTimer>
 #include <QMutex>
 #include <atomic>
+#include <array>
 #include <vector>
 #include <cstdint>
 #include <unordered_map>
@@ -62,6 +63,9 @@ private:
     /** ロード済みで未準備のプラグインにprepareAudioを呼び出す */
     void ensurePluginsPrepared();
     void ensureTrackPluginsPrepared(Track* track, double sr, int blockSize);
+    void updateUiTimerInterval();
+    void connectProjectSignals(Project* project);
+    void rebuildRoutingCacheLocked();
 
     /** ティック範囲内のMIDIイベントを収集 */
     struct MidiEventInternal {
@@ -99,6 +103,9 @@ private:
     // トラック毎のピーク値（インデックスアクセス）
     // UI側の更新用に適当なサイズを確保しておく
     static constexpr size_t MAX_TRACKS_METERING = 128;
+    static constexpr int UI_TIMER_INTERVAL_PLAYING_MS = 16;
+    static constexpr int UI_TIMER_INTERVAL_IDLE_MS = 50;
+    static constexpr int IDLE_MAINTENANCE_INTERVAL_TICKS = 4;
     std::array<std::atomic<float>, MAX_TRACKS_METERING> m_trackPeakL;
     std::array<std::atomic<float>, MAX_TRACKS_METERING> m_trackPeakR;
 
@@ -107,6 +114,9 @@ private:
     std::vector<float> m_mixBufR;
     std::vector<float> m_trackBufL;
     std::vector<float> m_trackBufR;
+    // オーディオコールバック内の動的確保を避けるため、プラグイン用バッファも再利用する。
+    std::vector<float> m_pluginBufL;
+    std::vector<float> m_pluginBufR;
 
     // フォルダバス（フォルダトラックID → L/Rバッファ）
     struct FolderBus {
@@ -114,4 +124,9 @@ private:
         std::vector<float> bufR;
     };
     std::unordered_map<int, FolderBus> m_folderBuses;
+    // フォルダの深さ順ルーティングはトラック構造変更時だけ再構築する。
+    std::unordered_map<int, Track*> m_trackByIdCache;
+    std::vector<int> m_sortedFolderTrackIndices;
+    std::atomic<bool> m_routingCacheDirty{true};
+    int m_idleMaintenanceTick = 0;
 };

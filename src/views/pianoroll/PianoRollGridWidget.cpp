@@ -11,6 +11,7 @@
 #include "Note.h"
 #include "Project.h"
 #include "Track.h"
+#include <algorithm>
 #include <QPainter>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -81,16 +82,8 @@ QSize PianoRollGridWidget::sizeHint() const
 int PianoRollGridWidget::computeRequiredWidth() const
 {
     int minWidth = static_cast<int>(MIN_BARS * BASE_PIXELS_PER_BAR * m_zoomLevel);
-    
-    qint64 maxTick = 0;
-    if (m_project) {
-        for (Track* track : m_project->tracks()) {
-            for (Clip* clip : track->clips()) {
-                qint64 endTick = clip->startTick() + clip->durationTicks();
-                if (endTick > maxTick) maxTick = endTick;
-            }
-        }
-    }
+
+    qint64 maxTick = maxContentTick();
     if (m_activeClip) {
         qint64 clipEnd = m_activeClip->startTick() + m_activeClip->durationTicks();
         if (clipEnd > maxTick) maxTick = clipEnd;
@@ -186,6 +179,10 @@ void PianoRollGridWidget::setPlayheadPosition(qint64 tickPosition)
 void PianoRollGridWidget::setProject(Project* project)
 {
     m_project = project;
+    m_clipEndTickCache.clear();
+    m_cachedMaxContentTick = 0;
+    m_contentWidthCacheDirty = true;
+    invalidateGhostNoteCache();
     
     if (m_project) {
         auto connectNote = [this](Note* note) {
@@ -193,7 +190,14 @@ void PianoRollGridWidget::setProject(Project* project)
         };
 
         auto connectClip = [this, connectNote](Clip* clip) {
-            connect(clip, &Clip::changed, this, &PianoRollGridWidget::scheduleUpdate);
+            connect(clip, &Clip::changed, this, [this, clip]() {
+                invalidateGhostNoteCache();
+                if (updateContentWidthCacheForClip(clip)) {
+                    updateDynamicSize();
+                } else {
+                    scheduleUpdate();
+                }
+            });
             connect(clip, &Clip::noteAdded, this, [this, connectNote](Note* note) {
                 connectNote(note);
                 startNoteAnim(note, NoteAnim::PopIn);
@@ -202,8 +206,11 @@ void PianoRollGridWidget::setProject(Project* project)
             connect(clip, &Clip::noteRemoved, this, [this](Note* note){
                 if (m_selectedNote == note) m_selectedNote = nullptr;
                 if (m_selectedNotes.contains(note)) m_selectedNotes.removeAll(note);
-                
-                startNoteAnim(note, NoteAnim::FadeOut);
+
+                // 通常の削除操作はバーストだけ見せ、Undo/Redo 由来の削除だけフェードアウトさせる。
+                if (m_notesPendingBurstRemoval.remove(note) == 0) {
+                    startNoteAnim(note, NoteAnim::FadeOut);
+                }
                 scheduleUpdate();
             });
             
@@ -213,16 +220,23 @@ void PianoRollGridWidget::setProject(Project* project)
         };
 
         auto connectTrack = [this, connectClip](Track* track) {
-            connect(track, &Track::propertyChanged, this, &PianoRollGridWidget::scheduleUpdate);
+            connect(track, &Track::propertyChanged, this, [this]() {
+                invalidateGhostNoteCache();
+                scheduleUpdate();
+            });
             connect(track, &Track::clipAdded, this, [this, connectClip](Clip* clip) {
                 connectClip(clip);
-                scheduleUpdate();
+                invalidateGhostNoteCache();
+                updateContentWidthCacheForClip(clip);
+                updateDynamicSize();
             });
             connect(track, &Track::clipRemoved, this, [this](Clip* clip){
                 if (m_activeClip && m_activeClip == clip) {
                     setActiveClip(nullptr);
                 }
-                scheduleUpdate();
+                invalidateGhostNoteCache();
+                removeClipFromContentWidthCache(clip);
+                updateDynamicSize();
             });
 
             for (Clip* clip : track->clips()) {
@@ -238,18 +252,22 @@ void PianoRollGridWidget::setProject(Project* project)
         // 新規トラック追加時にも接続
         connect(m_project, &Project::trackAdded, this, [this, connectTrack](Track* track){
             connectTrack(track);
-            scheduleUpdate();
+            m_contentWidthCacheDirty = true;
+            invalidateGhostNoteCache();
+            updateDynamicSize();
         });
         
         connect(m_project, &Project::trackRemoved, this, [this](Track* track){
             if (m_activeClip && m_activeClip->parent() == track) {
                 setActiveClip(nullptr);
             }
-            scheduleUpdate();
+            m_contentWidthCacheDirty = true;
+            invalidateGhostNoteCache();
+            updateDynamicSize();
         });
     }
     
-    update();
+    updateDynamicSize();
 }
 
 void PianoRollGridWidget::setActiveClip(Clip* clip)
@@ -260,8 +278,113 @@ void PianoRollGridWidget::setActiveClip(Clip* clip)
     
     // 接続は setProject におけるプロジェクト全体の監視ロジックに一元化されているため、
     // ここで個別に connect/disconnect する必要はありません。
-    
-    update();
+
+    updateDynamicSize();
+}
+
+qint64 PianoRollGridWidget::maxContentTick() const
+{
+    if (!m_contentWidthCacheDirty) {
+        return m_cachedMaxContentTick;
+    }
+
+    // 縮小や削除が発生した時だけ全体を再走査し、通常描画では結果を使い回す。
+    m_cachedMaxContentTick = 0;
+    m_clipEndTickCache.clear();
+
+    if (m_project) {
+        for (Track* track : m_project->tracks()) {
+            for (Clip* clip : track->clips()) {
+                const qint64 endTick = clip->endTick();
+                m_clipEndTickCache.insert(clip->id(), endTick);
+                if (endTick > m_cachedMaxContentTick) {
+                    m_cachedMaxContentTick = endTick;
+                }
+            }
+        }
+    }
+
+    m_contentWidthCacheDirty = false;
+    return m_cachedMaxContentTick;
+}
+
+bool PianoRollGridWidget::updateContentWidthCacheForClip(Clip* clip)
+{
+    if (!clip) {
+        return false;
+    }
+
+    const qint64 newEndTick = clip->endTick();
+    const qint64 oldEndTick = m_clipEndTickCache.value(clip->id(), newEndTick);
+    m_clipEndTickCache.insert(clip->id(), newEndTick);
+
+    // 右方向への拡張はインクリメンタルに更新できる。
+    if (newEndTick > m_cachedMaxContentTick) {
+        m_cachedMaxContentTick = newEndTick;
+        return true;
+    }
+
+    // 最大値だったクリップが縮んだ時だけ、次回に全体再計算する。
+    if (oldEndTick == m_cachedMaxContentTick && newEndTick < oldEndTick) {
+        m_contentWidthCacheDirty = true;
+    }
+
+    return false;
+}
+
+void PianoRollGridWidget::removeClipFromContentWidthCache(Clip* clip)
+{
+    if (!clip) {
+        return;
+    }
+
+    const qint64 removedEndTick = m_clipEndTickCache.take(clip->id());
+    if (removedEndTick >= m_cachedMaxContentTick) {
+        m_contentWidthCacheDirty = true;
+    }
+}
+
+void PianoRollGridWidget::rebuildGhostNoteCache() const
+{
+    m_ghostNoteCache.clear();
+    m_maxGhostNoteDurationTicks = 0;
+
+    if (!m_project) {
+        m_ghostNoteCacheDirty = false;
+        return;
+    }
+
+    // ゴーストノートを平坦化してstartTick順に並べることで、可視範囲の前後だけを走査できる。
+    for (Track* track : m_project->tracks()) {
+        if (!track || !track->isVisible()) {
+            continue;
+        }
+
+        QColor ghostFill = track->color();
+        ghostFill.setAlpha(60);
+        QColor ghostBorder = track->color();
+        ghostBorder.setAlpha(90);
+
+        for (Clip* clip : track->clips()) {
+            for (Note* note : clip->notes()) {
+                GhostNoteCacheEntry entry;
+                entry.clipId = clip->id();
+                entry.startTick = clip->startTick() + note->startTick();
+                entry.durationTicks = note->durationTicks();
+                entry.row = 127 - qBound(0, note->pitch(), 127);
+                entry.fillColor = ghostFill;
+                entry.borderColor = ghostBorder;
+                m_ghostNoteCache.push_back(entry);
+                m_maxGhostNoteDurationTicks = qMax(m_maxGhostNoteDurationTicks, entry.durationTicks);
+            }
+        }
+    }
+
+    std::sort(m_ghostNoteCache.begin(), m_ghostNoteCache.end(),
+              [](const GhostNoteCacheEntry& lhs, const GhostNoteCacheEntry& rhs) {
+                  return lhs.startTick < rhs.startTick;
+              });
+    m_ghostNoteCacheDirty = false;
 }
 
 // ===== アニメーション実装 =====
@@ -288,6 +411,15 @@ void PianoRollGridWidget::startNoteAnim(Note* note, NoteAnim::Type type)
     if (!m_animTimer.isActive()) {
         m_animTimer.start();
     }
+}
+
+void PianoRollGridWidget::markNoteForBurstRemoval(Note* note)
+{
+    if (!note) {
+        return;
+    }
+
+    m_notesPendingBurstRemoval.insert(note);
 }
 
 void PianoRollGridWidget::startBurstAnim(const QRectF& rect, const QColor& color)
