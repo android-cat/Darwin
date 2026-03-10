@@ -654,13 +654,24 @@ void PlaybackController::audioRenderCallback(float* outputBuffer, int numFrames,
 
     // 再生位置とアクティブノートの更新（再生中のみ）
     if (playing) {
-        m_playPositionTicks.store(endTick);
+        double nextPosition = endTick;
+        qint64 expEnd = m_project->exportEndTick();
+        
+        // エクスポート範囲が設定されており、終端に達した場合はループ
+        if (expEnd != -1 && nextPosition >= static_cast<double>(expEnd)) {
+            nextPosition = static_cast<double>(m_project->exportStartTick());
+            m_activeNotes.clear(); // ループ時の音残りを防ぐ
+        }
+
+        m_playPositionTicks.store(nextPosition);
 
         // 終了ティックまでのアクティブノートでもう終わったものを除去
-        m_activeNotes.erase(
-            std::remove_if(m_activeNotes.begin(), m_activeNotes.end(),
-                           [endTick](const ActiveNote& an) { return an.endTick < endTick; }),
-            m_activeNotes.end());
+        if (!m_activeNotes.empty()) {
+            m_activeNotes.erase(
+                std::remove_if(m_activeNotes.begin(), m_activeNotes.end(),
+                               [endTick](const ActiveNote& an) { return an.endTick < endTick; }),
+                m_activeNotes.end());
+        }
     }
 }
 
