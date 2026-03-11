@@ -7,10 +7,12 @@
 #include "TimelineWidget.h"
 #include "Project.h"
 #include "Track.h"
+#include "Clip.h"
 #include "PlaybackController.h"
 #include "AudioEngine.h"
 #include "ArrangementGridWidget.h"
 #include "PianoRollGridWidget.h"
+#include "common/AudioFileReader.h"
 #include "commands/UndoCommands.h"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -701,7 +703,7 @@ void MainWindow::openProject()
             return;
         }
 
-        if (!result.ok || !m_project->fromJson(result.json, true)) {
+        if (!result.ok || !m_project->fromJson(result.json, true, true)) {
             const QString reason = result.error.isEmpty()
                 ? QStringLiteral("プロジェクトファイルの\n読み込みに失敗しました")
                 : result.error;
@@ -718,6 +720,32 @@ void MainWindow::openProject()
         m_undoStack->clear();
         updateWindowTitle();
 
+        struct AudioClipRestoreRequest {
+            QPointer<Clip> clip;
+            QString filePath;
+        };
+
+        QVector<AudioClipRestoreRequest> audioRestoreQueue;
+        auto collectAudioRestoreRequests = [&audioRestoreQueue](Track* track) {
+            if (!track) {
+                return;
+            }
+
+            for (Clip* clip : track->clips()) {
+                if (!clip || !clip->isAudioClip() || clip->audioFilePath().isEmpty()) {
+                    continue;
+                }
+                if (!clip->audioSamplesL().isEmpty()) {
+                    continue;
+                }
+                audioRestoreQueue.push_back({clip, clip->audioFilePath()});
+            }
+        };
+        collectAudioRestoreRequests(m_project->masterTrack());
+        for (Track* track : m_project->tracks()) {
+            collectAudioRestoreRequests(track);
+        }
+
         QList<QPointer<Track>> restoreQueue;
         if (m_project->masterTrack()) {
             restoreQueue.append(m_project->masterTrack());
@@ -726,9 +754,63 @@ void MainWindow::openProject()
             restoreQueue.append(track);
         }
 
+        auto pendingAudioLoads = std::make_shared<int>(audioRestoreQueue.size());
+        auto deferredRestoreFinished = std::make_shared<bool>(false);
+        auto finalizeLoad = std::make_shared<std::function<void()>>();
+        *finalizeLoad = [this, safeDlg, loadGeneration, pendingAudioLoads, deferredRestoreFinished]() {
+            if (loadGeneration != m_projectLoadGeneration) {
+                if (safeDlg) {
+                    safeDlg->close();
+                }
+                return;
+            }
+
+            if (!*deferredRestoreFinished || *pendingAudioLoads > 0) {
+                return;
+            }
+
+            if (safeDlg) {
+                safeDlg->showSuccess(m_project->trackCount());
+            }
+        };
+
+        for (const AudioClipRestoreRequest& request : audioRestoreQueue) {
+            auto* audioWatcher = new QFutureWatcher<AudioFileData>(this);
+            connect(audioWatcher, &QFutureWatcher<AudioFileData>::finished, this,
+                    [this, audioWatcher, request, loadGeneration, pendingAudioLoads, finalizeLoad]() {
+                const AudioFileData audioData = audioWatcher->result();
+                audioWatcher->deleteLater();
+
+                if (loadGeneration != m_projectLoadGeneration) {
+                    (*finalizeLoad)();
+                    return;
+                }
+
+                if (request.clip) {
+                    if (audioData.valid) {
+                        request.clip->setAudioData(audioData.samplesL, audioData.samplesR,
+                                                   audioData.sampleRate, request.filePath,
+                                                   audioData.waveformPreview);
+                    } else {
+                        qWarning() << "Project load: オーディオファイルの再読み込みに失敗:"
+                                   << request.filePath << audioData.errorMessage;
+                    }
+                }
+
+                if (*pendingAudioLoads > 0) {
+                    --(*pendingAudioLoads);
+                }
+                (*finalizeLoad)();
+            });
+            audioWatcher->setFuture(QtConcurrent::run([filePath = request.filePath]() {
+                return AudioFileReader::readFile(filePath);
+            }));
+        }
+
         auto index = std::make_shared<int>(0);
         auto step = std::make_shared<std::function<void()>>();
-        *step = [this, safeDlg, restoreQueue, index, step, loadGeneration]() {
+        *step = [this, safeDlg, restoreQueue, index, step, loadGeneration,
+                 deferredRestoreFinished, finalizeLoad]() {
             if (loadGeneration != m_projectLoadGeneration) {
                 if (safeDlg) safeDlg->close();
                 return;
@@ -755,9 +837,8 @@ void MainWindow::openProject()
                 return;
             }
 
-            if (safeDlg) {
-                safeDlg->showSuccess(m_project->trackCount());
-            }
+            *deferredRestoreFinished = true;
+            (*finalizeLoad)();
         };
 
         QTimer::singleShot(0, this, [step]() { (*step)(); });

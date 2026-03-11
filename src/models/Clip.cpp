@@ -128,7 +128,7 @@ QJsonObject Clip::toJson() const
     return json;
 }
 
-Clip* Clip::fromJson(const QJsonObject& json, QObject* parent)
+Clip* Clip::fromJson(const QJsonObject& json, QObject* parent, bool deferAudioLoad)
 {
     QElapsedTimer uiYieldClock;
     uiYieldClock.start();
@@ -145,14 +145,13 @@ Clip* Clip::fromJson(const QJsonObject& json, QObject* parent)
         clip->m_clipType = ClipType::Audio;
         QString audioPath = json["audioFilePath"].toString();
         double savedSampleRate = json["audioSampleRate"].toDouble(44100.0);
+        clip->m_audioFilePath = audioPath;
+        clip->m_audioSampleRate = savedSampleRate;
 
-        if (!audioPath.isEmpty()) {
+        if (!audioPath.isEmpty() && !deferAudioLoad) {
             // オーディオファイルを再読み込み
             if (!clip->loadAudioFile(audioPath, savedSampleRate)) {
                 qWarning() << "オーディオファイルの再読み込みに失敗:" << audioPath;
-                // パスだけ保持しておく（データは無い状態）
-                clip->m_audioFilePath = audioPath;
-                clip->m_audioSampleRate = savedSampleRate;
             }
         }
     } else {
@@ -203,14 +202,19 @@ bool Clip::loadAudioFile(const QString& filePath, double projectSampleRate)
 }
 
 void Clip::setAudioData(const QVector<float>& samplesL, const QVector<float>& samplesR,
-                         double sampleRate, const QString& filePath)
+                        double sampleRate, const QString& filePath,
+                        const QVector<float>& waveformPreview)
 {
     m_clipType = ClipType::Audio;
     m_audioSamplesL = samplesL;
     m_audioSamplesR = samplesR;
     m_audioSampleRate = sampleRate;
     m_audioFilePath = filePath;
-    regenerateWaveformPreview();
+    if (!waveformPreview.isEmpty()) {
+        m_waveformPreview = waveformPreview;
+    } else {
+        regenerateWaveformPreview();
+    }
     emit changed();
 }
 

@@ -419,7 +419,8 @@ QJsonObject Track::toJson() const
     return json;
 }
 
-Track* Track::fromJson(const QJsonObject& json, QObject* parent, bool deferPluginRestore)
+Track* Track::fromJson(const QJsonObject& json, QObject* parent,
+                       bool deferPluginRestore, bool deferAudioLoad)
 {
     QElapsedTimer uiYieldClock;
     uiYieldClock.start();
@@ -534,7 +535,7 @@ Track* Track::fromJson(const QJsonObject& json, QObject* parent, bool deferPlugi
     // クリップ
     QJsonArray clipsArray = json["clips"].toArray();
     for (const QJsonValue& val : clipsArray) {
-        Clip* clip = Clip::fromJson(val.toObject(), track);
+        Clip* clip = Clip::fromJson(val.toObject(), track, deferAudioLoad);
         track->m_clips.append(clip);
         yieldUi();
     }

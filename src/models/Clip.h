@@ -72,11 +72,13 @@ public:
 
     /** オーディオデータを直接設定する（リサンプル済みデータ等） */
     void setAudioData(const QVector<float>& samplesL, const QVector<float>& samplesR,
-                      double sampleRate, const QString& filePath = QString());
+                      double sampleRate, const QString& filePath = QString(),
+                      const QVector<float>& waveformPreview = {});
 
     // シリアライズ
     QJsonObject toJson() const;
-    static Clip* fromJson(const QJsonObject& json, QObject* parent = nullptr);
+    static Clip* fromJson(const QJsonObject& json, QObject* parent = nullptr,
+                          bool deferAudioLoad = false);
 
 signals:
     void changed();

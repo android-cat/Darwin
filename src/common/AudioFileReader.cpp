@@ -3,6 +3,10 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QDebug>
+#include <algorithm>
+#include <atomic>
+#include <future>
+#include <thread>
 #include <cmath>
 #include <cstring>
 
@@ -45,25 +49,66 @@ QVector<float> AudioFileReader::generateWaveformPreview(
 {
     if (samplesL.isEmpty() || previewWidth <= 0) return {};
 
-    int totalSamples = samplesL.size();
+    const int totalSamples = samplesL.size();
     QVector<float> preview(previewWidth, 0.0f);
 
-    int samplesPerPoint = qMax(1, totalSamples / previewWidth);
+    auto fillPreviewRange = [&](int beginIndex, int endIndex) {
+        for (int i = beginIndex; i < endIndex; ++i) {
+            int startIdx = static_cast<int>(static_cast<qint64>(i) * totalSamples / previewWidth);
+            int endIdxLocal = static_cast<int>(static_cast<qint64>(i + 1) * totalSamples / previewWidth);
+            endIdxLocal = qMin(endIdxLocal, totalSamples);
 
-    for (int i = 0; i < previewWidth; ++i) {
-        int startIdx = static_cast<int>(static_cast<qint64>(i) * totalSamples / previewWidth);
-        int endIdx = static_cast<int>(static_cast<qint64>(i + 1) * totalSamples / previewWidth);
-        endIdx = qMin(endIdx, totalSamples);
-
-        float peak = 0.0f;
-        for (int j = startIdx; j < endIdx; ++j) {
-            float valL = std::abs(samplesL[j]);
-            float valR = samplesR.isEmpty() ? valL : std::abs(samplesR[j]);
-            float maxVal = qMax(valL, valR);
-            if (maxVal > peak) peak = maxVal;
+            float peak = 0.0f;
+            for (int j = startIdx; j < endIdxLocal; ++j) {
+                const float valL = std::abs(samplesL[j]);
+                const float valR = samplesR.isEmpty() ? valL : std::abs(samplesR[j]);
+                const float maxVal = qMax(valL, valR);
+                if (maxVal > peak) {
+                    peak = maxVal;
+                }
+            }
+            preview[i] = peak;
         }
-        preview[i] = peak;
+    };
+
+    const int minParallelWidth = 256;
+    const unsigned int hwThreads = (std::max)(1u, std::thread::hardware_concurrency());
+    const int workerCount = std::min<int>(previewWidth, static_cast<int>(hwThreads));
+    if (workerCount <= 1 || previewWidth < minParallelWidth) {
+        fillPreviewRange(0, previewWidth);
+        return preview;
     }
+
+    static std::atomic<int> s_parallelPreviewJobs{0};
+    const int previousJobCount = s_parallelPreviewJobs.fetch_add(1, std::memory_order_relaxed);
+    if (previousJobCount > 0) {
+        s_parallelPreviewJobs.fetch_sub(1, std::memory_order_relaxed);
+        fillPreviewRange(0, previewWidth);
+        return preview;
+    }
+
+    std::vector<std::future<void>> futures;
+    futures.reserve(static_cast<size_t>(workerCount));
+    const int chunkSize = (previewWidth + workerCount - 1) / workerCount;
+
+    // 波形プレビューは表示点ごとに独立しているため、区間単位で並列集計できる。
+    for (int workerIndex = 0; workerIndex < workerCount; ++workerIndex) {
+        const int beginIndex = workerIndex * chunkSize;
+        const int endIndex = qMin(previewWidth, beginIndex + chunkSize);
+        if (beginIndex >= endIndex) {
+            break;
+        }
+
+        futures.emplace_back(std::async(std::launch::async, [&, beginIndex, endIndex]() {
+            fillPreviewRange(beginIndex, endIndex);
+        }));
+    }
+
+    for (std::future<void>& future : futures) {
+        future.get();
+    }
+    s_parallelPreviewJobs.fetch_sub(1, std::memory_order_relaxed);
+
     return preview;
 }
 

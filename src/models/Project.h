@@ -90,7 +90,8 @@ public:
 
     // シリアライズ
     QJsonObject toJson() const;
-    bool fromJson(const QJsonObject& json, bool deferPluginRestore = false);
+    bool fromJson(const QJsonObject& json, bool deferPluginRestore = false,
+                  bool deferAudioLoad = false);
     bool saveToFile(const QString& filePath);
     bool loadFromFile(const QString& filePath);
     QString currentFilePath() const { return m_filePath; }

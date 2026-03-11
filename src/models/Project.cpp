@@ -414,7 +414,7 @@ QJsonObject Project::toJson() const
     return json;
 }
 
-bool Project::fromJson(const QJsonObject& json, bool deferPluginRestore)
+bool Project::fromJson(const QJsonObject& json, bool deferPluginRestore, bool deferAudioLoad)
 {
     QElapsedTimer uiYieldClock;
     uiYieldClock.start();
@@ -450,7 +450,8 @@ bool Project::fromJson(const QJsonObject& json, bool deferPluginRestore)
 
     // Masterを復元 (フォールバック)
     if (json.contains("masterTrack")) {
-        m_masterTrack = Track::fromJson(json["masterTrack"].toObject(), this, deferPluginRestore);
+        m_masterTrack = Track::fromJson(json["masterTrack"].toObject(), this,
+                                        deferPluginRestore, deferAudioLoad);
     } else {
         m_masterTrack = new Track("Master", this);
     }
@@ -460,7 +461,8 @@ bool Project::fromJson(const QJsonObject& json, bool deferPluginRestore)
     // トラックを復元
     QJsonArray tracksArray = json["tracks"].toArray();
     for (const QJsonValue& val : tracksArray) {
-        Track* track = Track::fromJson(val.toObject(), this, deferPluginRestore);
+        Track* track = Track::fromJson(val.toObject(), this,
+                                       deferPluginRestore, deferAudioLoad);
         m_tracks.append(track);
         connect(track, &Track::propertyChanged, this, &Project::modified);
         emit trackAdded(track);

@@ -91,7 +91,8 @@ public:
 
     // シリアライズ
     QJsonObject toJson() const;
-    static Track* fromJson(const QJsonObject& json, QObject* parent = nullptr, bool deferPluginRestore = false);
+    static Track* fromJson(const QJsonObject& json, QObject* parent = nullptr,
+                           bool deferPluginRestore = false, bool deferAudioLoad = false);
 
     // 遅延復元
     bool hasDeferredPluginRestore() const { return m_hasDeferredPluginRestore; }

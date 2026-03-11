@@ -11,6 +11,8 @@
 #include <QUrl>
 #include <QFileInfo>
 #include <QDebug>
+#include <QFutureWatcher>
+#include <QtConcurrent/QtConcurrent>
 #include "common/Constants.h"
 #include "common/MidiFileParser.h"
 #include "common/AudioFileReader.h"
@@ -143,76 +145,78 @@ void ArrangementGridWidget::handleAudioFileDrop(const QString& filePath, const Q
 
     // オーディオファイル名を取得
     QFileInfo fileInfo(filePath);
-    QString fileName = fileInfo.baseName();
-
-    // 中間再描画を防止
-    setUpdatesEnabled(false);
+    const QString fileName = fileInfo.baseName();
 
     int rowHeight = 100;
-    QList<Track*> visTracks_ = visibleTracks();
+    const QList<Track*>& visTracks = visibleTracks();
     int trackIndex = dropPos.y() / rowHeight;
 
     // ドロップ位置のX座標からスタートtickを算出（小節単位にスナップ）
     qint64 dropTick = static_cast<qint64>(dropPos.x() / pixelsPerTick());
     dropTick = (dropTick / TICKS_PER_BAR) * TICKS_PER_BAR;
 
-    Track* targetTrack = nullptr;
-
     // 該当トラックが存在する場合はそのトラックを使用
-    if (trackIndex >= 0 && trackIndex < visTracks_.size()) {
-        Track* t = visTracks_.at(trackIndex);
+    QPointer<Track> targetTrack;
+    if (trackIndex >= 0 && trackIndex < visTracks.size()) {
+        Track* t = visTracks.at(trackIndex);
         if (!t->isFolder()) {
             targetTrack = t;
         }
     }
 
-    // トラックが存在しない場合は新規作成
-    if (!targetTrack) {
-        targetTrack = m_project->addTrack(fileName);
-    }
+    QPointer<Project> droppedProject = m_project;
+    auto* watcher = new QFutureWatcher<AudioFileData>(this);
+    connect(watcher, &QFutureWatcher<AudioFileData>::finished, this,
+            [this, watcher, droppedProject, targetTrack, filePath, fileName, dropTick, dropPos]() {
+        const AudioFileData audioData = watcher->result();
+        watcher->deleteLater();
 
-    if (!targetTrack) {
-        setUpdatesEnabled(true);
-        return;
-    }
+        if (!droppedProject || droppedProject != m_project) {
+            return;
+        }
 
-    // オーディオファイルの長さをtickに変換してクリップを作成
-    // まずファイルを読み込んでサンプル数からtickを計算
-    AudioFileData audioData = AudioFileReader::readFile(filePath);
-    if (!audioData.valid) {
-        qWarning() << "オーディオファイル読み込みエラー:" << audioData.errorMessage;
-        setUpdatesEnabled(true);
-        return;
-    }
+        if (!audioData.valid) {
+            qWarning() << "オーディオファイル読み込みエラー:" << audioData.errorMessage;
+            return;
+        }
 
-    // オーディオ長（秒）→ tick に変換
-    double durationSeconds = static_cast<double>(audioData.samplesL.size()) / audioData.sampleRate;
-    double bpm = m_project->bpm();
-    double ticksPerSecond = bpm * TICKS_PER_BEAT / 60.0;
-    qint64 rawDuration = static_cast<qint64>(durationSeconds * ticksPerSecond);
+        Track* resolvedTrack = targetTrack.data();
+        if (!resolvedTrack) {
+            resolvedTrack = m_project->addTrack(fileName);
+        }
+        if (!resolvedTrack) {
+            return;
+        }
 
-    // 小節単位に切り上げ
-    qint64 clipDuration = ((rawDuration + TICKS_PER_BAR - 1) / TICKS_PER_BAR) * TICKS_PER_BAR;
-    if (clipDuration <= 0) clipDuration = TICKS_PER_BAR;
+        // 読み込みと波形プレビュー生成はワーカースレッドで済ませ、UIスレッドではモデル更新だけ行う。
+        const double durationSeconds = static_cast<double>(audioData.samplesL.size()) / audioData.sampleRate;
+        const double ticksPerSecond = m_project->bpm() * TICKS_PER_BEAT / 60.0;
+        qint64 rawDuration = static_cast<qint64>(durationSeconds * ticksPerSecond);
+        qint64 clipDuration = ((rawDuration + TICKS_PER_BAR - 1) / TICKS_PER_BAR) * TICKS_PER_BAR;
+        if (clipDuration <= 0) {
+            clipDuration = TICKS_PER_BAR;
+        }
 
-    // クリップを作成し、オーディオデータを設定
-    Clip* clip = targetTrack->addClip(dropTick, clipDuration);
-    clip->setAudioData(audioData.samplesL, audioData.samplesR,
-                       audioData.sampleRate, filePath);
+        Clip* clip = resolvedTrack->addClip(dropTick, clipDuration);
+        if (!clip) {
+            return;
+        }
 
-    // 波リビールアニメーションを開始
-    startWaveReveal(clip->id(), QPointF(dropPos));
+        clip->setAudioData(audioData.samplesL, audioData.samplesR,
+                           audioData.sampleRate, filePath, audioData.waveformPreview);
+        startWaveReveal(clip->id(), QPointF(dropPos));
 
-    // 選択状態にする
-    m_selectedClipId = clip->id();
-    emit clipSelected(clip);
+        m_selectedClipId = clip->id();
+        emit clipSelected(clip);
 
-    setUpdatesEnabled(true);
+        qDebug() << QStringLiteral("オーディオファイルをインポート: %1 (%.1f秒 → トラック '%2')")
+                    .arg(fileName)
+                    .arg(durationSeconds)
+                    .arg(resolvedTrack->name());
 
-    qDebug() << QStringLiteral("オーディオファイルをインポート: %1 (%.1f秒 → トラック '%2')")
-                .arg(fileName)
-                .arg(durationSeconds)
-                .arg(targetTrack->name());
-
-    update();
+        update();
+    });
+    watcher->setFuture(QtConcurrent::run([filePath]() {
+        return AudioFileReader::readFile(filePath);
+    }));
 }
