@@ -22,7 +22,7 @@ void ArrangementGridWidget::paintEvent(QPaintEvent *event)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
 
-    int rowHeight = 100;
+    const int rowHeight = ARRANGEMENT_TRACK_ROW_HEIGHT;
     double ppBar = pixelsPerBar();
     double ppBeat = ppBar / BEATS_PER_BAR;
     
@@ -113,9 +113,9 @@ void ArrangementGridWidget::paintEvent(QPaintEvent *event)
 
     // 再生中の「光の軌跡（モーションブラー）」演出
     if (m_trailOpacity > 0.001f) {
-        double trailLen = 80.0;
+        const double trailLen = PLAYHEAD_TRAIL_LENGTH;
         QLinearGradient trailGradient(playheadX, 0, playheadX - trailLen, 0);
-        QColor trailColor = QColor("#FF3366");
+        QColor trailColor = ThemeManager::instance().accentColor();
         trailColor.setAlpha(static_cast<int>(100 * m_trailOpacity));
         trailGradient.setColorAt(0, trailColor);
         trailGradient.setColorAt(1, Qt::transparent);
@@ -124,7 +124,7 @@ void ArrangementGridWidget::paintEvent(QPaintEvent *event)
     }
 
     // メインの再生ヘッド線
-    p.setPen(QPen(QColor("#FF3366"), 2));
+    p.setPen(QPen(ThemeManager::instance().accentColor(), 2));
     p.drawLine(QPointF(playheadX, 0), QPointF(playheadX, widgetHeight));
     p.setRenderHint(QPainter::Antialiasing, false);
 
@@ -140,7 +140,7 @@ void ArrangementGridWidget::drawClips(QPainter& p, const QRect& visibleRect)
 {
     if (!m_project) return;
 
-    int rowHeight = 100;
+    const int rowHeight = ARRANGEMENT_TRACK_ROW_HEIGHT;
     const QList<Track*>& visTracks = visibleTracks();
     
     for (int i = 0; i < visTracks.size(); ++i) {

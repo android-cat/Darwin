@@ -10,6 +10,7 @@
 #include <QVBoxLayout>
 #include <QGraphicsOpacityEffect>
 #include <QPropertyAnimation>
+#include "common/Constants.h"
 #include "common/ThemeManager.h"
 
 // _Headers.cppと同じstatic関数（D&D中のスタイルリセットに使用）
@@ -141,7 +142,7 @@ void ArrangementView::updateTrackDrag(const QPoint& globalPos)
     if (!layoutParent) return;
     
     QPoint localPos = layoutParent->mapFromGlobal(globalPos);
-    int rowHeight = 100;
+    const int rowHeight = Darwin::ARRANGEMENT_TRACK_ROW_HEIGHT;
     
     // 前回のフォルダハイライトをリセット
     if (m_dragTargetFolder && m_trackHeaders.contains(m_dragTargetFolder)) {

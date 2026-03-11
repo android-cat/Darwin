@@ -23,7 +23,7 @@ VelocityLaneWidget::VelocityLaneWidget(QWidget *parent)
 
     // スムーズアニメーション用タイマー（60fps）
     connect(&m_animTimer, &QTimer::timeout, this, &VelocityLaneWidget::tickAnimation);
-    m_animTimer.setInterval(16);
+    m_animTimer.setInterval(UI_ANIMATION_INTERVAL_MS);
 }
 
 QSize VelocityLaneWidget::sizeHint() const
@@ -73,6 +73,7 @@ void VelocityLaneWidget::paintEvent(QPaintEvent *event)
     // Draw velocity bars with smooth animation
     bool anyAnimating = false;
     for (Note* note : m_activeClip->notes()) {
+        const QColor accentColor = Darwin::ThemeManager::instance().accentColor();
         int x = static_cast<int>(note->startTick() * PIXELS_PER_TICK);
         
         // 目標比率
@@ -99,13 +100,13 @@ void VelocityLaneWidget::paintEvent(QPaintEvent *event)
         
         // ステムをグラデーシン新付きで描画
         QColor stemColor = (note == m_interactingNote)
-            ? QColor("#fda4af")
+            ? accentColor.lighter(180)
             : Darwin::ThemeManager::instance().secondaryTextColor();
         p.setPen(stemColor);
         p.drawLine(x + 2, y, x + 2, height());
         
         // Draw top rect (handle)
-        QColor noteColor = (note == m_interactingNote) ? QColor("#FF6688") : QColor("#FF3366");
+        QColor noteColor = (note == m_interactingNote) ? accentColor.lighter(125) : accentColor;
         p.setPen(Qt::NoPen);
         p.setBrush(noteColor);
         p.drawRoundedRect(x, y, w, 5, 1, 1);

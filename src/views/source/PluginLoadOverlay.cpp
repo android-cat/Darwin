@@ -6,6 +6,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <cmath>
+#include "common/Constants.h"
 #include "common/ThemeManager.h"
 
 // ─── PluginLoadOverlay ───────────────────────────────────
@@ -45,7 +46,7 @@ void PluginLoadOverlay::startLoading(const QString& pluginName)
 
     m_clock.start();
     m_stageStartMs = m_clock.elapsed();
-    m_timer.start(16);
+    m_timer.start(Darwin::UI_ANIMATION_INTERVAL_MS);
 }
 
 void PluginLoadOverlay::showSuccess()
@@ -109,7 +110,7 @@ void PluginLoadOverlay::paintEvent(QPaintEvent*)
     QColor ovBorder = Darwin::ThemeManager::instance().borderColor();
     QColor ovText = Darwin::ThemeManager::instance().textColor();
     QColor ovSub = Darwin::ThemeManager::instance().secondaryTextColor();
-    QColor ovAccent = Darwin::ThemeManager::instance().isDarkMode() ? QColor(255, 51, 102) : QColor(255, 51, 102); // Keep brand color
+    QColor ovAccent = Darwin::ThemeManager::instance().accentColor();
     QColor ovSuccess = QColor(34, 197, 94);
     QColor ovFailure = QColor(239, 68, 68);
 

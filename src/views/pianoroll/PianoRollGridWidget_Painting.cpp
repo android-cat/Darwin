@@ -115,7 +115,7 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
         if (clipEndX < visibleRight) {
             p.fillRect(QRectF(clipEndX, visibleTop, visibleRight - clipEndX, visibleRect.height()), outOfRange);
         }
-        p.setPen(QPen(QColor("#FF3366"), 1, Qt::DashLine));
+        p.setPen(QPen(ThemeManager::instance().accentColor(), 1, Qt::DashLine));
         if (clipStartX >= visibleLeft && clipStartX <= visibleRight)
             p.drawLine(clipStartX, visibleTop, clipStartX, visibleBottom);
         if (clipEndX >= visibleLeft && clipEndX <= visibleRight)
@@ -163,7 +163,7 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
     // アクティブクリップのノートを描画（不透明・完全表示）
     if (m_activeClip) {
         // アクティブクリップの親トラックの色を取得
-        QColor baseColor("#FF3366"); // デフォルト
+        QColor baseColor = ThemeManager::instance().accentColor(); // デフォルト
         Track* parentTrack = qobject_cast<Track*>(m_activeClip->parent());
         if (parentTrack) {
             baseColor = parentTrack->color();
@@ -276,9 +276,9 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
 
     // 再生中の「光の軌跡（モーションブラー）」演出
     if (m_trailOpacity > 0.001f) {
-        double trailLen = 80.0;
+        const double trailLen = PLAYHEAD_TRAIL_LENGTH;
         QLinearGradient trailGradient(playheadX, 0, playheadX - trailLen, 0);
-        QColor trailColor = QColor("#FF3366");
+        QColor trailColor = ThemeManager::instance().accentColor();
         trailColor.setAlpha(static_cast<int>(100 * m_trailOpacity)); 
         trailGradient.setColorAt(0, trailColor);
         trailGradient.setColorAt(1, Qt::transparent);
@@ -287,7 +287,7 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
     }
 
     // メインの再生ヘッド線
-    p.setPen(QPen(QColor("#FF3366"), 2));
+    p.setPen(QPen(ThemeManager::instance().accentColor(), 2));
     p.drawLine(QPointF(playheadX, 0), QPointF(playheadX, height()));
     p.setRenderHint(QPainter::Antialiasing, false);
     

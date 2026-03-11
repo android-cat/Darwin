@@ -8,6 +8,7 @@
 #include <QEventLoop>
 #include <QElapsedTimer>
 #include <QMutexLocker>
+#include "common/Constants.h"
 #include "common/ModelAccessLock.h"
 
 int Track::s_nextId = 1;
@@ -35,7 +36,7 @@ const QList<QColor>& Track::defaultColors()
 {
     // DAW向けの鮮やかなカラーパレット
     static const QList<QColor> colors = {
-        QColor("#FF3366"), // ローズ
+        QColor(Darwin::ACCENT_COLOR_HEX), // ローズ
         QColor("#3b82f6"), // ブルー
         QColor("#10b981"), // エメラルド
         QColor("#f59e0b"), // アンバー

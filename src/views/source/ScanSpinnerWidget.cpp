@@ -4,6 +4,7 @@
  */
 #include "SourceView.h"
 #include <QPainter>
+#include "common/ThemeManager.h"
 
 // ─── ScanSpinnerWidget ───────────────────────────────────
 
@@ -38,14 +39,16 @@ void ScanSpinnerWidget::paintEvent(QPaintEvent*)
     p.setRenderHint(QPainter::Antialiasing);
     
     QRectF r(2, 2, width() - 4, height() - 4);
+    QColor accentColor = Darwin::ThemeManager::instance().accentColor();
     
     // Draw spinning arc with gradient sweep
-    QPen pen(QColor("#FF3366"), 2.0, Qt::SolidLine, Qt::RoundCap);
+    QPen pen(accentColor, 2.0, Qt::SolidLine, Qt::RoundCap);
     p.setPen(pen);
     p.drawArc(r, m_angle * 16, 270 * 16);
     
     // Draw trailing faded arc
-    QPen fadePen(QColor(255, 51, 102, 60), 2.0, Qt::SolidLine, Qt::RoundCap);
+    accentColor.setAlpha(60);
+    QPen fadePen(accentColor, 2.0, Qt::SolidLine, Qt::RoundCap);
     p.setPen(fadePen);
     p.drawArc(r, (m_angle + 270) * 16, 90 * 16);
 }

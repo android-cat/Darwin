@@ -2,6 +2,7 @@
 #include <QPainter>
 #include <QMouseEvent>
 #include <QtMath>
+#include "common/Constants.h"
 #include "common/ThemeManager.h"
 
 KnobWidget::KnobWidget(const QString &label, QWidget *parent)
@@ -19,7 +20,7 @@ KnobWidget::KnobWidget(const QString &label, QWidget *parent)
 
     // スムーズアニメーション用タイマー
     connect(&m_animTimer, &QTimer::timeout, this, &KnobWidget::tickAnimation);
-    m_animTimer.setInterval(16);
+    m_animTimer.setInterval(Darwin::UI_ANIMATION_INTERVAL_MS);
 }
 
 void KnobWidget::setValue(float value)

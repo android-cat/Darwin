@@ -13,6 +13,7 @@
 #include <QPushButton>
 #include <QLineEdit>
 #include <QColorDialog>
+#include "common/Constants.h"
 #include "common/ThemeManager.h"
 // 名前編集フィールドのスタイルをテーマに合わせて生成
 static QString makeNameEditStyle(const Darwin::ThemeManager& tm, int fontSize = 11)
@@ -72,7 +73,7 @@ QWidget* ArrangementView::createFolderHeader(Track* folder)
 {
     QWidget *trackWidget = new QWidget();
     trackWidget->setObjectName("folderHeader");
-    trackWidget->setFixedHeight(100);
+    trackWidget->setFixedHeight(Darwin::ARRANGEMENT_TRACK_ROW_HEIGHT);
     
     applyTrackHeaderStyle(trackWidget, folder, m_selectedTrack, m_project);
     
@@ -176,7 +177,7 @@ QWidget* ArrangementView::createTrackHeader(Track* track)
     QWidget *trackWidget = new QWidget();
     trackWidget->setObjectName("trackHeader");
 
-    trackWidget->setFixedHeight(100); // グリッドのrowHeightと同期
+    trackWidget->setFixedHeight(Darwin::ARRANGEMENT_TRACK_ROW_HEIGHT); // グリッドのrowHeightと同期
     
     applyTrackHeaderStyle(trackWidget, track, m_selectedTrack, m_project);
     

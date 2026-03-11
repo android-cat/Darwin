@@ -185,7 +185,7 @@ void ExportProgressDialog::drawPen(QPainter& p, const QPointF& tipPos) const
     bool isDark = tm.isDarkMode();
 
     // 画像カラー
-    QColor penBodyColor = QColor("#FF3366");
+    QColor penBodyColor = Darwin::ThemeManager::instance().accentColor();
     QColor penWhiteColor = QColor("#ffffff");
 
     QColor actualBody = penBodyColor;

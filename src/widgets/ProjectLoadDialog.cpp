@@ -3,6 +3,7 @@
 #include <QPainterPath>
 #include <QApplication>
 #include <cmath>
+#include "common/Constants.h"
 #include "common/ThemeManager.h"
 
 static float easeOutCubic(float t) { return 1.0f - std::pow(1.0f - t, 3.0f); }
@@ -24,7 +25,7 @@ ProjectLoadDialog::ProjectLoadDialog(const QString& projectName, QWidget* parent
     m_stageStartMs = m_clock.elapsed();
 
     connect(&m_timer, &QTimer::timeout, this, &ProjectLoadDialog::tick);
-    m_timer.setInterval(16);
+    m_timer.setInterval(Darwin::UI_ANIMATION_INTERVAL_MS);
     m_timer.start();
 }
 

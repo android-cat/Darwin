@@ -176,14 +176,17 @@ void TimelineWidget::paintEvent(QPaintEvent* event)
                 if (spanW < 4.0) continue; // 極小区間はスキップ
 
                 QRectF spanRect(x1 + 1, chordLaneTop + 1, spanW - 2, chordLaneH - 2);
+                QColor accentColor = Darwin::ThemeManager::instance().accentColor();
+                QColor accentFill = accentColor;
+                accentFill.setAlpha(18);
 
                 // コード帯ブロック（アクセント色の薄い背景 + 左ボーダー）
                 p.setPen(Qt::NoPen);
-                p.setBrush(QColor(255, 51, 102, 18));  // #FF3366 @ 7%
+                p.setBrush(accentFill);
                 p.drawRoundedRect(spanRect, 3, 3);
 
                 // 左端にアクセントライン
-                p.setPen(QPen(QColor("#FF3366"), 2));
+                p.setPen(QPen(accentColor, 2));
                 p.drawLine(QPointF(x1 + 1, chordLaneTop + 2), QPointF(x1 + 1, chordLaneTop + chordLaneH - 2));
 
                 // コード名テキスト（幅が十分ある場合のみ）
@@ -210,9 +213,9 @@ void TimelineWidget::paintEvent(QPaintEvent* event)
 
         // 再生中の「光の軌跡（モーションブラー）」演出
         if (m_trailOpacity > 0.001f) {
-            double trailLen = 60.0;
+            const double trailLen = Darwin::PLAYHEAD_TRAIL_LENGTH;
             QLinearGradient trailGradient(playheadX, 0, playheadX - trailLen, 0);
-            QColor trailColor = QColor("#FF3366");
+            QColor trailColor = Darwin::ThemeManager::instance().accentColor();
             trailColor.setAlpha(static_cast<int>(120 * m_trailOpacity));
             trailGradient.setColorAt(0, trailColor);
             trailGradient.setColorAt(1, Qt::transparent);
@@ -225,7 +228,7 @@ void TimelineWidget::paintEvent(QPaintEvent* event)
         }
 
         // メインの再生ヘッド線
-        p.setPen(QPen(QColor("#FF3366"), 2));
+        p.setPen(QPen(Darwin::ThemeManager::instance().accentColor(), 2));
         p.drawLine(QPointF(playheadX, 0), QPointF(playheadX, height()));
         
         p.setRenderHint(QPainter::Antialiasing, false);
@@ -460,7 +463,7 @@ void TimelineWidget::autoScrollIfNeeded(double localX)
     if (scrollSpeed != 0) {
         if (!m_scrollTimer) {
             m_scrollTimer = new QTimer(this);
-            m_scrollTimer->setInterval(16);
+            m_scrollTimer->setInterval(Darwin::UI_ANIMATION_INTERVAL_MS);
             connect(m_scrollTimer, &QTimer::timeout, this, [this, hbar]() {
                 hbar->setValue(hbar->value() + m_scrollSpeed);
             });
@@ -542,7 +545,8 @@ void TimelineWidget::drawFlags(QPainter& p)
             p.translate(0, yOffset);
 
             // フラッグポール
-            p.setPen(QPen(QColor("#FF3366"), 1.5));
+            const QColor accentColor = Darwin::ThemeManager::instance().accentColor();
+            p.setPen(QPen(accentColor, 1.5));
             p.drawLine(fx, 0, fx, chordLaneTop);
 
             // フラッグ旗
@@ -552,13 +556,14 @@ void TimelineWidget::drawFlags(QPainter& p)
             flagPath.lineTo(fx, 10);
             flagPath.closeSubpath();
             p.setPen(Qt::NoPen);
-            p.setBrush(QColor("#FF3366"));
+            p.setBrush(accentColor);
             p.drawPath(flagPath);
 
             p.restore();
         } else {
             // 通常描画
-            p.setPen(QPen(QColor("#FF3366"), 1.5));
+            const QColor accentColor = Darwin::ThemeManager::instance().accentColor();
+            p.setPen(QPen(accentColor, 1.5));
             p.drawLine(fx, 0, fx, chordLaneTop);
 
             QPainterPath flagPath;
@@ -567,7 +572,7 @@ void TimelineWidget::drawFlags(QPainter& p)
             flagPath.lineTo(fx, 10);
             flagPath.closeSubpath();
             p.setPen(Qt::NoPen);
-            p.setBrush(QColor("#FF3366"));
+            p.setBrush(accentColor);
             p.drawPath(flagPath);
         }
     }
@@ -578,7 +583,9 @@ void TimelineWidget::drawFlags(QPainter& p)
 
         // ドラッグ中は半透明で描画（コード帯より上のみ）
         const int chordLaneTop = 22;
-        p.setPen(QPen(QColor(255, 51, 102, 180), 1.5));
+        QColor dragAccent = Darwin::ThemeManager::instance().accentColor();
+        dragAccent.setAlpha(180);
+        p.setPen(QPen(dragAccent, 1.5));
         p.drawLine(fx, 0, fx, chordLaneTop);
 
         QPainterPath flagPath;
@@ -588,7 +595,7 @@ void TimelineWidget::drawFlags(QPainter& p)
         flagPath.closeSubpath();
 
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(255, 51, 102, 180));
+        p.setBrush(dragAccent);
         p.drawPath(flagPath);
     }
 
@@ -642,7 +649,7 @@ void TimelineWidget::tickFlagAnimations()
     bool animating = false;
 
     // 軌跡のフェードアニメーション
-    const float fadeStep = 0.12f; // フェード速度
+    const float fadeStep = Darwin::PLAYHEAD_TRAIL_FADE_STEP; // フェード速度
     if (m_isPlaying) {
         if (m_trailOpacity < 1.0f) {
             m_trailOpacity = qMin(1.0f, m_trailOpacity + fadeStep);

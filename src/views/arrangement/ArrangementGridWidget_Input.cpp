@@ -46,7 +46,7 @@ void ArrangementGridWidget::mousePressEvent(QMouseEvent *event)
     m_selectedClipId = -1;
     Clip* clickedClip = nullptr;
 
-    int rowHeight = 100; // Assuming this is consistent
+    const int rowHeight = ARRANGEMENT_TRACK_ROW_HEIGHT;
 
     if (m_project) {
         QList<Track*> visTracks = visibleTracks();
@@ -138,7 +138,7 @@ void ArrangementGridWidget::mouseMoveEvent(QMouseEvent *event)
         if (!(event->modifiers() & Qt::ControlModifier)) {
             m_selectedClipIds.clear();
         }
-        int rowHeight = 100;
+        const int rowHeight = ARRANGEMENT_TRACK_ROW_HEIGHT;
         QList<Track*> visTracks = visibleTracks();
         for (int i = 0; i < visTracks.size(); ++i) {
             Track* track = visTracks.at(i);
@@ -196,7 +196,7 @@ void ArrangementGridWidget::mouseMoveEvent(QMouseEvent *event)
                 }
                 
                 // トラック間移動: 現在のY座標からホバー先トラックを計算
-                int rowHeight = 100;
+                const int rowHeight = ARRANGEMENT_TRACK_ROW_HEIGHT;
                 QList<Track*> visTracks = visibleTracks();
                 int hoverTrack = qBound(0, event->pos().y() / rowHeight, visTracks.size() - 1);
                 if (m_dragCurrentTrackIndex != hoverTrack) {
@@ -262,7 +262,7 @@ void ArrangementGridWidget::mouseMoveEvent(QMouseEvent *event)
     } else {
         // カーソル形状をホバー状態に応じて更新
         if (m_project) {
-            int rowHeight = 100;
+            const int rowHeight = ARRANGEMENT_TRACK_ROW_HEIGHT;
             bool overEdge = false;
             QList<Track*> visTr = visibleTracks();
             for (int i = 0; i < visTr.size(); ++i) {
@@ -399,7 +399,7 @@ void ArrangementGridWidget::mouseDoubleClickEvent(QMouseEvent *event)
 {
     if (!m_project) return;
     
-    int rowHeight = 100;
+    const int rowHeight = ARRANGEMENT_TRACK_ROW_HEIGHT;
     QList<Track*> visTracks_ = visibleTracks();
     int trackIndex = static_cast<int>(event->position().y()) / rowHeight;
     
@@ -463,7 +463,7 @@ void ArrangementGridWidget::keyPressEvent(QKeyEvent *event)
         if (m_selectedClipId != -1 && m_project) {
             for (int i = 0; i < m_project->trackCount(); ++i) {
                 Track* track = m_project->trackAt(i);
-                int rowHeight = 100;
+                const int rowHeight = ARRANGEMENT_TRACK_ROW_HEIGHT;
                 int yTrack = i * rowHeight;
                 for (Clip* clip : track->clips()) {
                     if (clip->id() == m_selectedClipId) {
@@ -521,7 +521,7 @@ void ArrangementGridWidget::keyPressEvent(QKeyEvent *event)
 
         // マウスカーソル位置からペースト先を計算
         QPoint mousePos = mapFromGlobal(QCursor::pos());
-        int rowHeight = 100;
+        const int rowHeight = ARRANGEMENT_TRACK_ROW_HEIGHT;
         qint64 pasteStart = snapTick(static_cast<qint64>(mousePos.x() / pixelsPerTick()));
 
         // マウス位置のトラック行を特定
@@ -584,7 +584,7 @@ void ArrangementGridWidget::keyPressEvent(QKeyEvent *event)
                         QApplication::clipboard()->setText(doc.toJson(QJsonDocument::Compact));
 
                         // 削除（はじけアニメーション付き）
-                        int rowHeight = 100;
+                        const int rowHeight = ARRANGEMENT_TRACK_ROW_HEIGHT;
                         int yTrack = i * rowHeight;
                         int cx = static_cast<int>(clip->startTick() * pixelsPerTick());
                         int cw = static_cast<int>(clip->durationTicks() * pixelsPerTick());

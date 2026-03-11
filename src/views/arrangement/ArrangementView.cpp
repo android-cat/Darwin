@@ -12,6 +12,7 @@
 #include "widgets/CustomTooltip.h"
 #include "models/Project.h"
 #include "models/Track.h"
+#include "common/Constants.h"
 #include "common/FadeHelper.h"
 #include "common/ThemeManager.h"
 #include <QPainter>
@@ -109,7 +110,7 @@ ArrangementView::ArrangementView(QWidget *parent)
 
     // 1. 上部タイムラインヘッダー（固定高さ）
     QWidget *topContainer = m_topContainer = new QWidget(this);
-    topContainer->setFixedHeight(40);
+    topContainer->setFixedHeight(Darwin::ARRANGEMENT_TIMELINE_HEIGHT);
     topContainer->setStyleSheet(QString("background-color: %1; border-bottom: 1px solid %2;").arg(
         Darwin::ThemeManager::instance().panelBackgroundColor().name(),
         Darwin::ThemeManager::instance().borderColor().name()));
@@ -118,9 +119,9 @@ ArrangementView::ArrangementView(QWidget *parent)
     topLayout->setContentsMargins(0,0,0,0);
     topLayout->setSpacing(0);
     
-    // ヘッダー幅分のスペーサー (200px)
+    // ヘッダー幅分のスペーサー
     QWidget *cornerSpacer = m_cornerSpacer = new QWidget(topContainer);
-    cornerSpacer->setFixedWidth(200); 
+    cornerSpacer->setFixedWidth(Darwin::ARRANGEMENT_HEADER_WIDTH);
     cornerSpacer->setStyleSheet(QString("background-color: %1; border-right: 1px solid %2;").arg(
         Darwin::ThemeManager::instance().panelBackgroundColor().name(),
         Darwin::ThemeManager::instance().borderColor().name()));
@@ -191,7 +192,7 @@ ArrangementView::ArrangementView(QWidget *parent)
 
     // 左: ヘッダースクロールエリア
     m_headerScroll = new QScrollArea(splitArea);
-    m_headerScroll->setFixedWidth(200);
+    m_headerScroll->setFixedWidth(Darwin::ARRANGEMENT_HEADER_WIDTH);
     m_headerScroll->setFrameShape(QFrame::NoFrame);
     m_headerScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_headerScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);

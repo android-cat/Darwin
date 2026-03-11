@@ -2,6 +2,7 @@
 #include <QPainter>
 #include <QMouseEvent>
 #include <QtMath>
+#include "common/Constants.h"
 #include "common/ThemeManager.h"
 
 FaderWidget::FaderWidget(QWidget *parent)
@@ -19,7 +20,7 @@ FaderWidget::FaderWidget(QWidget *parent)
 
     // スムーズアニメーション用タイマー（60fps）
     connect(&m_animTimer, &QTimer::timeout, this, &FaderWidget::tickAnimation);
-    m_animTimer.setInterval(16);
+    m_animTimer.setInterval(Darwin::UI_ANIMATION_INTERVAL_MS);
 }
 
 void FaderWidget::setValue(float value)

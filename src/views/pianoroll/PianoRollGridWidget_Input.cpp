@@ -19,6 +19,7 @@
 #include "common/Constants.h"
 #include "common/BurstAnimationHelper.h"
 #include "common/ChordDetector.h"
+#include "common/ThemeManager.h"
 
 using namespace Darwin;
 static const double BASE_PIXELS_PER_BAR = PIXELS_PER_BAR;
@@ -396,7 +397,7 @@ void PianoRollGridWidget::mouseDoubleClickEvent(QMouseEvent *event)
         QRect noteRect(x, y, qMax(4, w), ROW_HEIGHT);
         
         if (noteRect.contains(event->pos())) {
-            QColor baseColor("#FF3366");
+            QColor baseColor = ThemeManager::instance().accentColor();
             Track* parentTrack = qobject_cast<Track*>(m_activeClip->parent());
             if (parentTrack) baseColor = parentTrack->color();
             startBurstAnim(QRectF(noteRect), baseColor);
@@ -458,7 +459,7 @@ void PianoRollGridWidget::keyPressEvent(QKeyEvent *event)
     
     // Delete/Backspace: 選択ノートを一括削除（はじけアニメーション付き）
     if ((event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) && !m_selectedNotes.isEmpty()) {
-        QColor baseColor("#FF3366");
+        QColor baseColor = ThemeManager::instance().accentColor();
         Track* parentTrack = qobject_cast<Track*>(m_activeClip->parent());
         if (parentTrack) baseColor = parentTrack->color();
         
@@ -576,7 +577,7 @@ void PianoRollGridWidget::keyPressEvent(QKeyEvent *event)
             QApplication::clipboard()->setText(doc.toJson(QJsonDocument::Compact));
 
             // 一括削除（はじけアニメーション付き）
-            QColor baseColor("#FF3366");
+            QColor baseColor = ThemeManager::instance().accentColor();
             Track* parentTrack = qobject_cast<Track*>(m_activeClip->parent());
             if (parentTrack) baseColor = parentTrack->color();
             

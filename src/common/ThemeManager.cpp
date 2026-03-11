@@ -1,4 +1,5 @@
 #include "ThemeManager.h"
+#include "Constants.h"
 
 namespace Darwin {
 
@@ -92,7 +93,7 @@ QColor ThemeManager::borderColor() const
 
 QColor ThemeManager::accentColor() const
 {
-    return QColor("#FF3366"); // プロジェクト標準のピンク系アクセント
+    return QColor(ACCENT_COLOR_HEX); // プロジェクト標準のピンク系アクセント
 }
 
 QColor ThemeManager::accentBgColor() const

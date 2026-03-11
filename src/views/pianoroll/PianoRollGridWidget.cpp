@@ -48,7 +48,7 @@ PianoRollGridWidget::PianoRollGridWidget(QWidget *parent)
     // アニメーションタイマー（60fps）
     m_animClock.start();
     connect(&m_animTimer, &QTimer::timeout, this, &PianoRollGridWidget::tickAnimations);
-    m_animTimer.setInterval(16);
+    m_animTimer.setInterval(UI_ANIMATION_INTERVAL_MS);
 
     // テーマ切替時に再描画
     connect(&Darwin::ThemeManager::instance(), &Darwin::ThemeManager::themeChanged,
@@ -445,7 +445,7 @@ void PianoRollGridWidget::tickAnimations()
     bool anyActive = false;
     
     // 軌跡のフェードアニメーション
-    const float fadeStep = 0.12f;
+    const float fadeStep = PLAYHEAD_TRAIL_FADE_STEP;
     if (m_isPlaying) {
         if (m_trailOpacity < 1.0f) {
             m_trailOpacity = qMin(1.0f, m_trailOpacity + fadeStep);

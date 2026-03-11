@@ -74,7 +74,7 @@ void ArrangementGridWidget::handleMidiFileDrop(const QString& filePath, const QP
     // トラック/クリップ作成中の中間再描画を防止
     setUpdatesEnabled(false);
 
-    int rowHeight = 100;
+    const int rowHeight = ARRANGEMENT_TRACK_ROW_HEIGHT;
     QList<Track*> visTracks_ = visibleTracks();
     int trackIndex = dropPos.y() / rowHeight;
 
@@ -147,7 +147,7 @@ void ArrangementGridWidget::handleAudioFileDrop(const QString& filePath, const Q
     QFileInfo fileInfo(filePath);
     const QString fileName = fileInfo.baseName();
 
-    int rowHeight = 100;
+    const int rowHeight = ARRANGEMENT_TRACK_ROW_HEIGHT;
     const QList<Track*>& visTracks = visibleTracks();
     int trackIndex = dropPos.y() / rowHeight;
 

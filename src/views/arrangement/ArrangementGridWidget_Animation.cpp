@@ -108,7 +108,7 @@ void ArrangementGridWidget::drawWaveRevealClip(QPainter& p, const WaveReveal& wa
     }
     if (!clip || !track) return;
 
-    int rowHeight = 100;
+    const int rowHeight = ARRANGEMENT_TRACK_ROW_HEIGHT;
     int x = static_cast<int>(clip->startTick() * pixelsPerTick());
     int w = static_cast<int>(clip->durationTicks() * pixelsPerTick());
     int y = trackIndex * rowHeight;
@@ -262,7 +262,7 @@ void ArrangementGridWidget::tickAnimations()
     bool anyActive = false;
     
     // 軌跡のフェードアニメーション
-    const float fadeStep = 0.12f;
+    const float fadeStep = PLAYHEAD_TRAIL_FADE_STEP;
     if (m_isPlaying) {
         if (m_trailOpacity < 1.0f) {
             m_trailOpacity = qMin(1.0f, m_trailOpacity + fadeStep);
@@ -344,7 +344,7 @@ void ArrangementGridWidget::onLongPressConfirmed()
     m_isResizing = false;
     m_isResizingLeft = false;
 
-    int rowHeight = 100;
+    const int rowHeight = ARRANGEMENT_TRACK_ROW_HEIGHT;
     QList<Track*> visTracks_ = visibleTracks();
 
     // 対象クリップとトラックを探す

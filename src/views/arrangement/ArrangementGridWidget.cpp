@@ -41,7 +41,7 @@ ArrangementGridWidget::ArrangementGridWidget(QWidget *parent)
     // アニメーションタイマー（60fps）
     m_animClock.start();
     connect(&m_animTimer, &QTimer::timeout, this, &ArrangementGridWidget::tickAnimations);
-    m_animTimer.setInterval(16);
+    m_animTimer.setInterval(UI_ANIMATION_INTERVAL_MS);
 
     // 長押し分割タイマー（500ms で確定）
     m_longPressTimer.setSingleShot(true);
@@ -190,7 +190,7 @@ QSize ArrangementGridWidget::sizeHint() const
 {
     int h = 0;
     if (m_project && m_project->trackCount() > 0) {
-        h = visibleTracks().size() * 100;
+        h = visibleTracks().size() * ARRANGEMENT_TRACK_ROW_HEIGHT;
     }
     
     return QSize(computeRequiredWidth(), h);
@@ -211,7 +211,7 @@ int ArrangementGridWidget::computeRequiredWidth() const
 void ArrangementGridWidget::updateDynamicSize()
 {
     if (m_project) {
-        setMinimumHeight(visibleTracks().size() * 100);
+        setMinimumHeight(visibleTracks().size() * ARRANGEMENT_TRACK_ROW_HEIGHT);
     }
     int newWidth = computeRequiredWidth();
     if (newWidth != minimumWidth()) {

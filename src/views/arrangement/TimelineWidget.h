@@ -8,6 +8,7 @@
 #include <QScrollBar>
 #include <QTimer>
 #include <QElapsedTimer>
+#include "common/Constants.h"
 
 class Project;
 class Track;
@@ -29,7 +30,7 @@ public:
         : QWidget(parent)
     {
         setMinimumWidth(6400);
-        setFixedHeight(40);
+        setFixedHeight(Darwin::ARRANGEMENT_TIMELINE_HEIGHT);
         setMouseTracking(true);
         setCursor(Qt::ArrowCursor);
 
@@ -40,7 +41,7 @@ public:
 
         // フラッグアニメーションタイマー（60fps）
         m_flagAnimClock.start();
-        m_flagAnimTimer.setInterval(16);
+        m_flagAnimTimer.setInterval(Darwin::UI_ANIMATION_INTERVAL_MS);
         connect(&m_flagAnimTimer, &QTimer::timeout, this, &TimelineWidget::tickFlagAnimations);
     }
 
@@ -70,7 +71,7 @@ public slots:
     }
 
     QSize sizeHint() const override {
-        return QSize(minimumWidth(), 40);
+        return QSize(minimumWidth(), Darwin::ARRANGEMENT_TIMELINE_HEIGHT);
     }
 
 protected:
