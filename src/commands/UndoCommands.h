@@ -136,6 +136,25 @@ private:
 };
 
 /**
+ * @brief 既存クリップをUndo履歴へ採用するコマンド
+ */
+class AdoptClipCommand : public QUndoCommand
+{
+public:
+    AdoptClipCommand(Track* track, Clip* clip,
+                     QUndoCommand* parent = nullptr);
+    ~AdoptClipCommand() override;
+    void undo() override;
+    void redo() override;
+
+private:
+    Track* m_track;
+    Clip* m_clip;
+    bool m_ownsClip;
+    bool m_firstRedo;
+};
+
+/**
  * @brief クリップ削除コマンド
  */
 class RemoveClipCommand : public QUndoCommand
@@ -210,6 +229,26 @@ private:
     Track* m_track;
     QString m_name;
     bool m_ownsTrack;               // 追加
+    bool m_firstRedo;
+};
+
+/**
+ * @brief 既存トラックをUndo履歴へ採用するコマンド
+ */
+class AdoptTrackCommand : public QUndoCommand
+{
+public:
+    AdoptTrackCommand(Project* project, Track* track,
+                      QUndoCommand* parent = nullptr);
+    ~AdoptTrackCommand() override;
+    void undo() override;
+    void redo() override;
+
+private:
+    Project* m_project;
+    Track* m_track;
+    int m_trackIndex;
+    bool m_ownsTrack;
     bool m_firstRedo;
 };
 

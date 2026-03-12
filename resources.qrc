@@ -10,6 +10,8 @@
     <file>icons/rewind.svg</file>
     <file>icons/skip-prev.svg</file>
     <file>icons/skip-next.svg</file>
+    <file>icons/mic.svg</file>
+    <file>icons/piano.svg</file>
     <file>icons/bulb.svg</file>
     <file>icons/darwin.png</file>
 </qresource>

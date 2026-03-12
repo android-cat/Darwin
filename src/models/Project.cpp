@@ -67,7 +67,8 @@ Track* Project::addTrack(const QString& name)
     Track* track = new Track(trackName, this);
     m_tracks.append(track);
     
-    connect(track, &Track::propertyChanged, this, &Project::modified);
+    connect(track, &Track::propertyChanged, this, &Project::modified,
+            Qt::UniqueConnection);
     
     emit trackAdded(track);
     emit modified();
@@ -109,7 +110,8 @@ void Project::insertTrack(Track* track, int index)
     } else {
         m_tracks.insert(index, track);
     }
-    connect(track, &Track::propertyChanged, this, &Project::modified);
+    connect(track, &Track::propertyChanged, this, &Project::modified,
+            Qt::UniqueConnection);
     emit trackAdded(track);
     emit modified();
 }

@@ -60,6 +60,8 @@ add_executable(Darwin
     # Widgets
     src/widgets/CustomTooltip.cpp
     src/widgets/CustomTooltip.h
+    src/widgets/RecordModeButton.cpp
+    src/widgets/RecordModeButton.h
     src/widgets/SplashWidget.cpp
     src/widgets/SplashWidget.h
     src/widgets/IconButton.h
@@ -87,11 +89,15 @@ add_executable(Darwin
     src/models/Project.cpp
     src/models/Project.h
     # Controllers
+    src/controllers/MidiInputDevice.cpp
+    src/controllers/MidiInputDevice.h
     src/controllers/PlaybackController.cpp
     src/controllers/PlaybackController.h
     # Audio
     src/audio/AudioEngine.cpp
     src/audio/AudioEngine.h
+    src/audio/AudioInputCapture.cpp
+    src/audio/AudioInputCapture.h
     src/audio/AudioExporter.cpp
     src/audio/AudioExporter.h
     # Commands
@@ -106,6 +112,8 @@ add_executable(Darwin
     src/common/AudioFileReader.cpp
     src/common/ThemeManager.cpp
     src/common/ThemeManager.h
+    src/common/WavWriter.cpp
+    src/common/WavWriter.h
     src/common/ModelAccessLock.cpp
     src/common/ModelAccessLock.h
     # Plugins
@@ -203,7 +211,7 @@ target_link_libraries(Darwin PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concur
 
 # Windows必須ライブラリ
 if(WIN32)
-    target_link_libraries(Darwin PRIVATE ole32 uuid avrt mfplat mfreadwrite mfuuid propsys shlwapi)
+    target_link_libraries(Darwin PRIVATE ole32 uuid avrt mfplat mfreadwrite mfuuid propsys shlwapi winmm)
     # _WIN32_WINNT / NTDDI_VERSION: FOLDERID_* 等 Vista 以降の API を有効化
     #   0x0A00 = Windows 10, NTDDI_WIN10 = 0x0A000000
     # WASAPI GUID は AudioEngine.cpp 内で __uuidof() を使用しているため INITGUID 不要。

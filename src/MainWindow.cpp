@@ -10,6 +10,7 @@
 #include "Clip.h"
 #include "PlaybackController.h"
 #include "AudioEngine.h"
+#include "RecordModeButton.h"
 #include "ArrangementGridWidget.h"
 #include "PianoRollGridWidget.h"
 #include "common/AudioFileReader.h"
@@ -90,6 +91,7 @@ MainWindow::MainWindow(QWidget *parent)
     , m_playBtn(nullptr)
     , m_skipPrevBtn(nullptr)
     , m_skipNextBtn(nullptr)
+    , m_recordBtn(nullptr)
     , m_bpmSpinBox(nullptr)
     , m_timecodeLabel(nullptr)
     , m_undoStack(nullptr)
@@ -118,6 +120,12 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::onPlayStateChanged);
     connect(m_playbackController, &PlaybackController::positionChanged,
             this, &MainWindow::onPlayheadPositionChanged);
+    connect(m_playbackController, &PlaybackController::recordingStateChanged,
+            this, &MainWindow::onRecordingStateChanged);
+    connect(m_playbackController, &PlaybackController::recordingFailed,
+            this, &MainWindow::onRecordingFailed);
+    connect(m_playbackController, &PlaybackController::recordingCommitted,
+            this, &MainWindow::onRecordingCommitted);
     
     // プロジェクト変更時にタイトルバー更新
     connect(m_project, &Project::modified, this, &MainWindow::updateWindowTitle);
@@ -238,6 +246,21 @@ void MainWindow::setupUi()
         }
     });
 
+    m_recordBtn = new RecordModeButton(playBpmContainer);
+    m_recordBtn->setObjectName("recordBtn");
+    m_recordBtn->setToolTip("音声録音");
+    connect(m_recordBtn, &RecordModeButton::clicked,
+            this, &MainWindow::onRecordButtonClicked);
+    connect(m_recordBtn, &RecordModeButton::modeChanged, this,
+            [this](RecordModeButton::Mode mode) {
+        if (!m_recordBtn) {
+            return;
+        }
+        m_recordBtn->setToolTip(mode == RecordModeButton::Mode::Midi
+            ? QStringLiteral("MIDI録音")
+            : QStringLiteral("音声録音"));
+    });
+
     // BPM SpinBox
     m_bpmSpinBox = new QDoubleSpinBox(playBpmContainer);
     m_bpmSpinBox->setObjectName("bpmSpinBox");
@@ -255,6 +278,7 @@ void MainWindow::setupUi()
     playBpmLayout->addWidget(m_skipPrevBtn);
     playBpmLayout->addWidget(m_playBtn);
     playBpmLayout->addWidget(m_skipNextBtn);
+    playBpmLayout->addWidget(m_recordBtn);
     playBpmLayout->addWidget(m_bpmSpinBox);
 
     // Divider
@@ -281,6 +305,7 @@ void MainWindow::setupUi()
     m_stackedWidget->addWidget(m_sourceView);
     
     ComposeView* composeView = new ComposeView(this);
+    m_composeView = composeView;
     m_stackedWidget->addWidget(composeView);
     
     // プロジェクトをComposeView全体に注入（ArrangementView + PianoRollView両方に伝播）
@@ -318,6 +343,12 @@ void MainWindow::setupUi()
                 composeView->arrangementView()->timelineWidget(), &TimelineWidget::setPlaying);
         connect(composeView->arrangementView()->timelineWidget(), &TimelineWidget::requestSeek,
                 m_playbackController, &PlaybackController::seekTo);
+    }
+    if (composeView->arrangementView()) {
+        connect(composeView->arrangementView(), &ArrangementView::trackSelected,
+                m_playbackController, &PlaybackController::setMidiMonitorTrack);
+        m_playbackController->setMidiMonitorTrack(
+            composeView->arrangementView()->selectedTrack());
     }
     
     // Connect SourceView to Project
@@ -463,6 +494,51 @@ void MainWindow::onPlayButtonClicked()
     }
 }
 
+void MainWindow::onRecordButtonClicked()
+{
+    if (!m_playbackController || !m_recordBtn) {
+        return;
+    }
+
+    if (m_playbackController->isRecording()) {
+        if (!m_playbackController->stopRecording()) {
+            clearPendingRecordingUndoState();
+        }
+        return;
+    }
+
+    const auto mode = (m_recordBtn->mode() == RecordModeButton::Mode::Midi)
+        ? PlaybackController::RecordingMode::Midi
+        : PlaybackController::RecordingMode::Audio;
+
+    // 1テイクごとに録音結果を1つのUndo単位へまとめるため、
+    // 開始前に前回ぶんの一時状態を必ず捨てておく。
+    clearPendingRecordingUndoState();
+
+    bool createdTrack = false;
+    Track* targetTrack = resolveRecordingTarget(
+        mode == PlaybackController::RecordingMode::Midi,
+        &createdTrack);
+    if (!targetTrack) {
+        QMessageBox::warning(this, "録音エラー", "録音先トラックを用意できませんでした。");
+        return;
+    }
+
+    if (!m_playbackController->startRecording(targetTrack, mode)) {
+        if (createdTrack && m_project) {
+            // 録音開始前提で自動作成したトラックなので、
+            // 実際に録音へ入れなかった場合はモデルを元に戻す。
+            m_project->removeTrack(targetTrack);
+        }
+        clearPendingRecordingUndoState();
+        return;
+    }
+
+    // 録音完了時に「新規トラック作成を含むテイクだったか」をUndoへ反映するため保持する。
+    m_pendingRecordingTrack = targetTrack;
+    m_pendingRecordingCreatedTrack = createdTrack;
+}
+
 void MainWindow::onPlayStateChanged(bool isPlaying)
 {
     if (m_playBtn) {
@@ -470,6 +546,54 @@ void MainWindow::onPlayStateChanged(bool isPlaying)
         m_playBtn->setIcon(coloredSvgIcon(
             isPlaying ? ":/icons/pause.svg" : ":/icons/play.svg", iconColor, QSize(20,20)));
     }
+}
+
+void MainWindow::onRecordingStateChanged(bool isRecording)
+{
+    if (m_recordBtn) {
+        m_recordBtn->setRecording(isRecording);
+    }
+
+    if (!isRecording) {
+        QTimer::singleShot(0, this, [this]() {
+            if (!m_playbackController || !m_playbackController->isRecording()) {
+                clearPendingRecordingUndoState();
+            }
+        });
+    }
+}
+
+void MainWindow::onRecordingFailed(const QString& message)
+{
+    if (m_recordBtn) {
+        m_recordBtn->setRecording(false);
+    }
+    clearPendingRecordingUndoState();
+    QMessageBox::warning(this, "録音エラー", message);
+}
+
+void MainWindow::onRecordingCommitted(Track* track, Clip* clip)
+{
+    if (!m_undoStack || !track || !clip) {
+        clearPendingRecordingUndoState();
+        return;
+    }
+
+    const bool createdTrack =
+        m_pendingRecordingCreatedTrack &&
+        !m_pendingRecordingTrack.isNull() &&
+        m_pendingRecordingTrack == track;
+
+    // 録音時点ではトラック/クリップ実体が既にモデルへ追加済みなので、
+    // その実体を Adopt*Command で Undo スタックへ採用する。
+    m_undoStack->beginMacro(createdTrack ? "Record Track" : "Record Clip");
+    if (createdTrack && m_project) {
+        m_undoStack->push(new AdoptTrackCommand(m_project, track));
+    }
+    m_undoStack->push(new AdoptClipCommand(track, clip));
+    m_undoStack->endMacro();
+
+    clearPendingRecordingUndoState();
 }
 
 void MainWindow::onPlayheadPositionChanged(qint64 tickPosition)
@@ -507,6 +631,63 @@ void MainWindow::onBpmChanged(double bpm)
         m_project->setBpm(bpm);
         qDebug() << "BPM changed to:" << bpm << "(Project BPM:" << m_project->bpm() << ")";
     }
+}
+
+void MainWindow::clearPendingRecordingUndoState()
+{
+    m_pendingRecordingTrack.clear();
+    m_pendingRecordingCreatedTrack = false;
+}
+
+Track* MainWindow::resolveRecordingTarget(bool midiMode, bool* createdTrack)
+{
+    if (createdTrack) {
+        *createdTrack = false;
+    }
+
+    if (!m_project) {
+        return nullptr;
+    }
+
+    Track* selectedTrack = nullptr;
+    if (m_composeView && m_composeView->arrangementView()) {
+        selectedTrack = m_composeView->arrangementView()->selectedTrack();
+    }
+
+    auto isRecordable = [](Track* track) {
+        return track && !track->isFolder();
+    };
+
+    // 優先順位:
+    // 1. 現在選択中の通常トラック
+    // 2. 既存の最初の通常トラック
+    // 3. 見つからなければ録音用トラックを自動作成
+    if (isRecordable(selectedTrack)) {
+        return selectedTrack;
+    }
+
+    for (Track* track : m_project->tracks()) {
+        if (isRecordable(track)) {
+            if (m_composeView && m_composeView->arrangementView()) {
+                m_composeView->arrangementView()->selectTrack(track);
+            }
+            return track;
+        }
+    }
+
+    Track* autoCreatedTrack = m_project->addTrack(
+        midiMode
+            ? QStringLiteral("MIDI Track")
+            : QStringLiteral("Audio Track"));
+    if (autoCreatedTrack) {
+        if (createdTrack) {
+            *createdTrack = true;
+        }
+        if (m_composeView && m_composeView->arrangementView()) {
+            m_composeView->arrangementView()->selectTrack(autoCreatedTrack);
+        }
+    }
+    return autoCreatedTrack;
 }
 
 // ===== メニューバー・ショートカット =====
@@ -640,6 +821,10 @@ void MainWindow::newProject()
 {
     ++m_projectLoadGeneration;
 
+    if (m_playbackController && m_playbackController->isRecording()) {
+        m_playbackController->stopRecording();
+    }
+
     // 再生を停止
     if (m_playbackController) {
         m_playbackController->stop();
@@ -673,6 +858,10 @@ void MainWindow::openProject()
         "Darwin Project (*.darwin);;JSON Files (*.json);;All Files (*)");
 
     if (filePath.isEmpty()) return;
+
+    if (m_playbackController && m_playbackController->isRecording()) {
+        m_playbackController->stopRecording();
+    }
 
     // 再生を停止
     if (m_playbackController) {
@@ -906,6 +1095,10 @@ void MainWindow::saveProjectAs()
 
 void MainWindow::exportAudio()
 {
+    if (m_playbackController && m_playbackController->isRecording()) {
+        m_playbackController->stopRecording();
+    }
+
     // エクスポート先ファイルを選択
     QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)
                          + "/Darwin/Projects";

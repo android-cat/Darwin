@@ -229,6 +229,48 @@ void AddClipCommand::redo()
     }
 }
 
+// ===== 既存クリップ採用コマンド =====
+
+AdoptClipCommand::AdoptClipCommand(Track* track, Clip* clip,
+                                   QUndoCommand* parent)
+    : QUndoCommand("Record Clip", parent)
+    , m_track(track)
+    , m_clip(clip)
+    , m_ownsClip(false)
+    , m_firstRedo(true)
+{
+}
+
+AdoptClipCommand::~AdoptClipCommand()
+{
+    if (m_ownsClip && m_clip) {
+        delete m_clip;
+    }
+}
+
+void AdoptClipCommand::undo()
+{
+    if (m_track && m_clip) {
+        m_track->takeClip(m_clip);
+        m_ownsClip = true;
+    }
+}
+
+void AdoptClipCommand::redo()
+{
+    if (m_firstRedo) {
+        // 録音直後のクリップ実体をそのまま採用するため、
+        // 初回redoでは何も生成せず「既に存在している」状態を正とする。
+        m_firstRedo = false;
+        return;
+    }
+
+    if (m_track && m_clip) {
+        m_track->insertClip(m_clip);
+        m_ownsClip = false;
+    }
+}
+
 // ===== クリップ削除コマンド =====
 
 RemoveClipCommand::RemoveClipCommand(Track* track, Clip* clip,
@@ -364,6 +406,49 @@ void AddTrackCommand::redo()
             m_project->insertTrack(m_track);
             m_ownsTrack = false;
         }
+    }
+}
+
+// ===== 既存トラック採用コマンド =====
+
+AdoptTrackCommand::AdoptTrackCommand(Project* project, Track* track,
+                                     QUndoCommand* parent)
+    : QUndoCommand("Record Track", parent)
+    , m_project(project)
+    , m_track(track)
+    , m_trackIndex(project ? project->trackIndex(track) : -1)
+    , m_ownsTrack(false)
+    , m_firstRedo(true)
+{
+}
+
+AdoptTrackCommand::~AdoptTrackCommand()
+{
+    if (m_ownsTrack && m_track) {
+        delete m_track;
+    }
+}
+
+void AdoptTrackCommand::undo()
+{
+    if (m_project && m_track) {
+        m_project->takeTrack(m_track);
+        m_ownsTrack = true;
+    }
+}
+
+void AdoptTrackCommand::redo()
+{
+    if (m_firstRedo) {
+        // 録音開始時に自動作成されたトラック実体を採用するので、
+        // 初回redoでは追加済みオブジェクトをそのまま使う。
+        m_firstRedo = false;
+        return;
+    }
+
+    if (m_project && m_track) {
+        m_project->insertTrack(m_track, m_trackIndex);
+        m_ownsTrack = false;
     }
 }
 

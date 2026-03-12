@@ -3,6 +3,8 @@
 #include <QObject>
 #include <QTimer>
 #include <QMutex>
+#include <QPointer>
+#include <QVector>
 #include <atomic>
 #include <array>
 #include <vector>
@@ -11,7 +13,10 @@
 
 class Project;
 class AudioEngine;
+class AudioInputCapture;
+class MidiInputDevice;
 class Track;
+class Clip;
 
 /**
  * @brief 再生制御を管理するコントローラー
@@ -24,11 +29,18 @@ class PlaybackController : public QObject
     Q_OBJECT
 
 public:
+    enum class RecordingMode {
+        Audio,
+        Midi
+    };
+
     explicit PlaybackController(Project* project, QObject* parent = nullptr);
     ~PlaybackController() override;
 
     // State
     bool isPlaying() const { return m_isPlaying; }
+    bool isRecording() const { return m_isRecording.load(); }
+    RecordingMode recordingMode() const { return m_recordingMode; }
     Project* project() const { return m_project; }
     AudioEngine* audioEngine() const { return m_audioEngine; }
 
@@ -38,6 +50,9 @@ public:
     void stop();
     void togglePlayPause();
     void seekTo(qint64 tickPosition);
+    void setMidiMonitorTrack(Track* track);
+    bool startRecording(Track* targetTrack, RecordingMode mode);
+    Clip* stopRecording();
 
     /** エクスポート用: AudioEngine停止・タイマー停止してプラグインを専有させる */
     void suspendForExport();
@@ -52,6 +67,9 @@ signals:
     void positionChanged(qint64 tickPosition);
     void masterLevelChanged(float levelL, float levelR);
     void trackLevelChanged(int trackIndex, float levelL, float levelR);
+    void recordingStateChanged(bool isRecording);
+    void recordingFailed(const QString& message);
+    void recordingCommitted(Track* track, Clip* clip);
 
 private slots:
     void onUiTimerTick();
@@ -64,8 +82,14 @@ private:
     void ensurePluginsPrepared();
     void ensureTrackPluginsPrepared(Track* track, double sr, int blockSize);
     void updateUiTimerInterval();
+    void updateMidiInputState();
     void connectProjectSignals(Project* project);
     void rebuildRoutingCacheLocked();
+    void appendRecordedAudio(const float* left, const float* right,
+                             int numFrames, double sampleRate);
+    void handleMidiMessage(uint8_t type, int pitch, int velocity);
+    Clip* finalizeAudioRecordingLocked(qint64 recordEndTick);
+    Clip* finalizeMidiRecordingLocked(qint64 recordEndTick);
 
     /** ティック範囲内のMIDIイベントを収集 */
     struct MidiEventInternal {
@@ -84,14 +108,51 @@ private:
         int16_t pitch;
         double endTick; // グローバルティック
     };
+    struct LiveMidiMessage {
+        int trackId = -1;
+        int sampleOffset = 0;
+        uint8_t type = 0;
+        int16_t pitch = 0;
+        float velocity = 0.0f;
+    };
 
     Project* m_project;
     AudioEngine* m_audioEngine;
+    AudioInputCapture* m_audioInputCapture;
+    MidiInputDevice* m_midiInputDevice;
     QTimer* m_uiTimer; // UI更新用タイマー
 
     // 再生状態（オーディオスレッドからもアクセス）
     std::atomic<bool> m_isPlaying{false};
     std::atomic<double> m_playPositionTicks{0.0}; // 高精度再生位置（ティック）
+    std::atomic<bool> m_isRecording{false};
+    RecordingMode m_recordingMode = RecordingMode::Audio;
+    QPointer<Track> m_recordTrack;
+    qint64 m_recordStartTick = 0;
+    QMutex m_recordMutex;
+    QVector<float> m_recordedAudioL;
+    QVector<float> m_recordedAudioR;
+    double m_recordedAudioSampleRate = 0.0;
+
+    struct RecordedMidiNote {
+        int pitch = 0;
+        qint64 startTick = 0;
+        qint64 durationTicks = 1;
+        int velocity = 0;
+    };
+    struct ActiveRecordedMidiNote {
+        int pitch = 0;
+        qint64 startTick = 0;
+        int velocity = 0;
+    };
+    QVector<RecordedMidiNote> m_recordedMidiNotes;
+    QVector<ActiveRecordedMidiNote> m_activeRecordedMidiNotes;
+
+    QPointer<Track> m_midiMonitorTrack;
+    QMutex m_liveMidiMutex;
+    QVector<LiveMidiMessage> m_liveMidiMessages;
+    std::array<int, 128> m_liveHeldNoteCounts{};
+    int m_midiMonitorTrackId = -1;
 
     // アクティブノート追跡（オーディオスレッド専用）
     std::vector<ActiveNote> m_activeNotes;

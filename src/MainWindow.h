@@ -10,6 +10,7 @@
 #include <QAction>
 #include <QUndoStack>
 #include <QToolButton>
+#include <QPointer>
 #include <QtGlobal>
 
 class QAbstractAnimation;
@@ -19,7 +20,10 @@ class Project;
 class PlaybackController;
 class ComposeView;
 class SourceView;
+class Track;
+class Clip;
 class QHBoxLayout;
+class RecordModeButton;
 
 class MainWindow : public QMainWindow
 {
@@ -31,7 +35,11 @@ public:
 private slots:
     void switchMode(int index);
     void onPlayButtonClicked();
+    void onRecordButtonClicked();
     void onPlayStateChanged(bool isPlaying);
+    void onRecordingStateChanged(bool isRecording);
+    void onRecordingFailed(const QString& message);
+    void onRecordingCommitted(Track* track, Clip* clip);
     void onPlayheadPositionChanged(qint64 tickPosition);
     void onBpmChanged(double bpm);
 
@@ -52,6 +60,8 @@ private:
     void updateTimecode(qint64 tickPosition);
     void applyGlobalStyle();
     void playBulbAnimation(bool turningOn);
+    void clearPendingRecordingUndoState();
+    Track* resolveRecordingTarget(bool midiMode, bool* createdTrack = nullptr);
 
     QStackedWidget *m_stackedWidget;
     SourceView *m_sourceView;
@@ -64,6 +74,7 @@ private:
     QPushButton *m_skipPrevBtn;
     QPushButton *m_playBtn;
     QPushButton *m_skipNextBtn;
+    RecordModeButton *m_recordBtn;
     QDoubleSpinBox *m_bpmSpinBox;
     QLabel *m_timecodeLabel;
 
@@ -87,5 +98,7 @@ private:
     PlaybackController *m_playbackController;
     ComposeView *m_composeView;
     QUndoStack *m_undoStack;
+    QPointer<Track> m_pendingRecordingTrack;
+    bool m_pendingRecordingCreatedTrack = false;
     quint64 m_projectLoadGeneration = 0;
 };

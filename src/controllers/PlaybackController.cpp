@@ -1,21 +1,45 @@
 #include "PlaybackController.h"
 #include "AudioEngine.h"
+#include "AudioInputCapture.h"
+#include "MidiInputDevice.h"
 #include "Project.h"
 #include "Track.h"
 #include "Clip.h"
 #include "Note.h"
 #include "VST3PluginInstance.h"
+#include "WavWriter.h"
+#include <QDateTime>
 #include <QDebug>
+#include <QDir>
 #include <QMutexLocker>
+#include <QStandardPaths>
+#include <QUuid>
 #include <algorithm>
 #include <cstring>
 #include <unordered_set>
+#include <utility>
 #include "common/ModelAccessLock.h"
+
+namespace {
+QString makeRecordingFilePath()
+{
+    const QString baseDir =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+        + QStringLiteral("/Recordings");
+    QDir().mkpath(baseDir);
+
+    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss_zzz"));
+    const QString suffix = QUuid::createUuid().toString(QUuid::WithoutBraces).left(8);
+    return baseDir + QStringLiteral("/take_%1_%2.wav").arg(stamp, suffix);
+}
+}
 
 PlaybackController::PlaybackController(Project* project, QObject* parent)
     : QObject(parent)
     , m_project(project)
     , m_audioEngine(new AudioEngine(this))
+    , m_audioInputCapture(new AudioInputCapture(this))
+    , m_midiInputDevice(new MidiInputDevice(this))
     , m_uiTimer(new QTimer(this))
 {
     // AudioEngineの初期化
@@ -39,11 +63,22 @@ PlaybackController::PlaybackController(Project* project, QObject* parent)
     connect(m_uiTimer, &QTimer::timeout, this, &PlaybackController::onUiTimerTick);
     m_uiTimer->start(); // 常時稼働
 
+    m_audioInputCapture->setCaptureCallback(
+        [this](const float* left, const float* right, int numFrames, double sampleRate) {
+            appendRecordedAudio(left, right, numFrames, sampleRate);
+        });
+    m_midiInputDevice->setMessageCallback(
+        [this](const MidiInputDevice::Message& message) {
+            handleMidiMessage(message.type, message.pitch, message.velocity);
+        });
+
     connectProjectSignals(m_project);
 }
 
 PlaybackController::~PlaybackController()
 {
+    setMidiMonitorTrack(nullptr);
+    stopRecording();
     stop();
     m_uiTimer->stop();
     m_audioEngine->stop();
@@ -55,6 +90,8 @@ void PlaybackController::setProject(Project* project)
         if (m_project) {
             disconnect(m_project, nullptr, this, nullptr);
         }
+        setMidiMonitorTrack(nullptr);
+        stopRecording();
         stop();
         m_project = project;
         connectProjectSignals(m_project);
@@ -237,6 +274,350 @@ void PlaybackController::seekTo(qint64 tickPosition)
     m_activeNotes.clear();
 }
 
+void PlaybackController::setMidiMonitorTrack(Track* track)
+{
+    Track* nextTrack = (track && !track->isFolder()) ? track : nullptr;
+    const int nextTrackId = nextTrack ? nextTrack->id() : -1;
+
+    bool changed = false;
+    {
+        QMutexLocker locker(&m_liveMidiMutex);
+        if (m_midiMonitorTrackId != nextTrackId) {
+            if (m_midiMonitorTrackId >= 0) {
+                // モニター先を切り替える時は、旧トラックで押しっぱなしになっている
+                // ノートを必ず解放してから新しいトラックへ切り替える。
+                for (int pitch = 0; pitch < static_cast<int>(m_liveHeldNoteCounts.size()); ++pitch) {
+                    if (m_liveHeldNoteCounts[pitch] <= 0) {
+                        continue;
+                    }
+                    LiveMidiMessage noteOff;
+                    noteOff.trackId = m_midiMonitorTrackId;
+                    noteOff.type = 1;
+                    noteOff.pitch = static_cast<int16_t>(pitch);
+                    noteOff.velocity = 0.0f;
+                    m_liveMidiMessages.push_back(noteOff);
+                }
+            }
+            m_liveHeldNoteCounts.fill(0);
+            m_midiMonitorTrackId = nextTrackId;
+            changed = true;
+        }
+    }
+
+    m_midiMonitorTrack = nextTrack;
+
+    if (nextTrack && m_audioEngine) {
+        // 停止中のライブモニターでもすぐ音が出せるよう、
+        // 選択された瞬間に対象プラグインだけ先に prepare しておく。
+        QMutexLocker<QRecursiveMutex> modelLock(&Darwin::modelAccessMutex());
+        const double sampleRate =
+            m_audioEngine->sampleRate() > 0.0 ? m_audioEngine->sampleRate() : 44100.0;
+        int blockSize = m_audioEngine->bufferSize();
+        if (blockSize <= 0) {
+            blockSize = 1024;
+        }
+        ensureTrackPluginsPrepared(nextTrack, sampleRate, blockSize);
+    }
+
+    if (changed) {
+        updateMidiInputState();
+    }
+}
+
+bool PlaybackController::startRecording(Track* targetTrack, RecordingMode mode)
+{
+    if (!m_project || !targetTrack) {
+        emit recordingFailed(QStringLiteral("録音先トラックが見つかりません。"));
+        return false;
+    }
+
+    if (targetTrack->isFolder()) {
+        emit recordingFailed(QStringLiteral("フォルダトラックには録音できません。"));
+        return false;
+    }
+
+    if (m_isRecording.load()) {
+        return true;
+    }
+
+    {
+        QMutexLocker locker(&m_recordMutex);
+        m_recordedAudioL.clear();
+        m_recordedAudioR.clear();
+        m_recordedAudioSampleRate = 0.0;
+        m_recordedMidiNotes.clear();
+        m_activeRecordedMidiNotes.clear();
+    }
+
+    m_recordTrack = targetTrack;
+    m_recordStartTick = m_project->playheadPosition();
+    m_recordingMode = mode;
+
+    bool inputReady = false;
+    if (mode == RecordingMode::Audio) {
+        inputReady = m_audioInputCapture->start();
+        if (!inputReady) {
+            emit recordingFailed(QStringLiteral("マイク入力を開始できませんでした。"));
+            m_recordTrack.clear();
+            return false;
+        }
+    } else {
+        inputReady = m_midiInputDevice->start();
+        if (!inputReady) {
+            emit recordingFailed(QStringLiteral("MIDI入力デバイスを開始できませんでした。"));
+            m_recordTrack.clear();
+            return false;
+        }
+    }
+
+    m_isRecording.store(true);
+
+    // 録音は常に現在のプレイヘッド位置から開始し、その長さぶんのクリップを後で確定する。
+    if (!m_isPlaying.load()) {
+        play();
+    }
+
+    if (!m_isPlaying.load()) {
+        m_isRecording.store(false);
+        if (mode == RecordingMode::Audio) {
+            m_audioInputCapture->stop();
+        } else {
+            updateMidiInputState();
+        }
+        m_recordTrack.clear();
+        emit recordingFailed(QStringLiteral("再生エンジンを開始できませんでした。"));
+        return false;
+    }
+
+    emit recordingStateChanged(true);
+    return true;
+}
+
+Clip* PlaybackController::stopRecording()
+{
+    if (!m_isRecording.load()) {
+        return nullptr;
+    }
+
+    const RecordingMode mode = m_recordingMode;
+    m_isRecording.store(false);
+
+    if (mode == RecordingMode::Audio) {
+        m_audioInputCapture->stop();
+    } else {
+        updateMidiInputState();
+    }
+
+    const qint64 recordEndTick =
+        std::max<qint64>(m_recordStartTick + 1,
+                         static_cast<qint64>(m_playPositionTicks.load()));
+
+    Clip* clip = nullptr;
+    {
+        QMutexLocker<QRecursiveMutex> modelLock(&Darwin::modelAccessMutex());
+        if (mode == RecordingMode::Audio) {
+            clip = finalizeAudioRecordingLocked(recordEndTick);
+        } else {
+            clip = finalizeMidiRecordingLocked(recordEndTick);
+        }
+    }
+
+    pause();
+    emit recordingStateChanged(false);
+    if (clip && m_recordTrack) {
+        emit recordingCommitted(m_recordTrack, clip);
+    }
+    m_recordTrack.clear();
+    return clip;
+}
+
+void PlaybackController::appendRecordedAudio(const float* left, const float* right,
+                                             int numFrames, double sampleRate)
+{
+    if (!m_isRecording.load() || m_recordingMode != RecordingMode::Audio ||
+        numFrames <= 0 || !left || !right) {
+        return;
+    }
+
+    QMutexLocker locker(&m_recordMutex);
+    if (m_recordedAudioSampleRate <= 0.0) {
+        m_recordedAudioSampleRate = sampleRate;
+    }
+
+    const int oldSize = m_recordedAudioL.size();
+    m_recordedAudioL.resize(oldSize + numFrames);
+    m_recordedAudioR.resize(oldSize + numFrames);
+    std::memcpy(m_recordedAudioL.data() + oldSize, left, numFrames * sizeof(float));
+    std::memcpy(m_recordedAudioR.data() + oldSize, right, numFrames * sizeof(float));
+}
+
+void PlaybackController::handleMidiMessage(uint8_t type, int pitch, int velocity)
+{
+    const int boundedPitch = qBound(0, pitch, 127);
+    const int boundedVelocity = qBound(0, velocity, 127);
+
+    if (m_isRecording.load() && m_recordingMode == RecordingMode::Midi) {
+        // MIDI入力は「録音データ化」と「ライブモニター」の二役を持つ。
+        // まずは録音用に相対tickへ変換してノート長を組み立てる。
+        const qint64 absoluteTick =
+            std::max<qint64>(m_recordStartTick,
+                             static_cast<qint64>(m_playPositionTicks.load()));
+        const qint64 relativeTick = std::max<qint64>(0, absoluteTick - m_recordStartTick);
+
+        QMutexLocker locker(&m_recordMutex);
+
+        if (type == 0) {
+            ActiveRecordedMidiNote active;
+            active.pitch = boundedPitch;
+            active.startTick = relativeTick;
+            active.velocity = qMax(1, boundedVelocity);
+            m_activeRecordedMidiNotes.push_back(active);
+        } else {
+            for (int i = m_activeRecordedMidiNotes.size() - 1; i >= 0; --i) {
+                if (m_activeRecordedMidiNotes.at(i).pitch != boundedPitch) {
+                    continue;
+                }
+
+                const ActiveRecordedMidiNote active = m_activeRecordedMidiNotes.takeAt(i);
+                RecordedMidiNote note;
+                note.pitch = active.pitch;
+                note.startTick = active.startTick;
+                note.durationTicks = std::max<qint64>(1, relativeTick - active.startTick);
+                note.velocity = active.velocity;
+                m_recordedMidiNotes.push_back(note);
+                break;
+            }
+        }
+    }
+
+    QMutexLocker locker(&m_liveMidiMutex);
+    if (m_midiMonitorTrackId < 0) {
+        return;
+    }
+
+    // ライブモニター側は「選択中トラックへ今すぐ鳴らす」ことが目的なので、
+    // オーディオスレッドが読める軽量なイベント列へ積むだけに留める。
+    bool shouldQueue = false;
+    if (type == 0) {
+        ++m_liveHeldNoteCounts[boundedPitch];
+        shouldQueue = true;
+    } else if (m_liveHeldNoteCounts[boundedPitch] > 0) {
+        --m_liveHeldNoteCounts[boundedPitch];
+        shouldQueue = true;
+    }
+
+    if (!shouldQueue) {
+        return;
+    }
+
+    LiveMidiMessage liveMessage;
+    liveMessage.trackId = m_midiMonitorTrackId;
+    liveMessage.type = type == 0 ? 0 : 1;
+    liveMessage.pitch = static_cast<int16_t>(boundedPitch);
+    liveMessage.velocity = type == 0
+        ? static_cast<float>(boundedVelocity) / 127.0f
+        : 0.0f;
+    m_liveMidiMessages.push_back(liveMessage);
+}
+
+void PlaybackController::updateMidiInputState()
+{
+    // MIDI入力は「MIDI録音中」または「ライブモニター対象トラックあり」のどちらかで生かす。
+    // 録音停止後もモニター対象が残っていれば、デバイスは閉じずにそのまま維持する。
+    const bool wantsMidiInput =
+        (m_isRecording.load() && m_recordingMode == RecordingMode::Midi) ||
+        !m_midiMonitorTrack.isNull();
+
+    if (wantsMidiInput) {
+        m_midiInputDevice->start();
+    } else {
+        m_midiInputDevice->stop();
+    }
+}
+
+Clip* PlaybackController::finalizeAudioRecordingLocked(qint64 recordEndTick)
+{
+    if (!m_recordTrack) {
+        return nullptr;
+    }
+
+    QVector<float> recordedL;
+    QVector<float> recordedR;
+    double sampleRate = 0.0;
+    {
+        QMutexLocker locker(&m_recordMutex);
+        recordedL = m_recordedAudioL;
+        recordedR = m_recordedAudioR;
+        sampleRate = m_recordedAudioSampleRate;
+        m_recordedAudioL.clear();
+        m_recordedAudioR.clear();
+        m_recordedAudioSampleRate = 0.0;
+    }
+
+    const qint64 durationTicks = std::max<qint64>(1, recordEndTick - m_recordStartTick);
+
+    if (recordedL.isEmpty() || recordedR.isEmpty()) {
+        const int fallbackFrames = sampleRate > 0.0
+            ? std::max<int>(1, static_cast<int>((durationTicks / (m_project->bpm() * Project::TICKS_PER_BEAT / 60.0)) * sampleRate))
+            : 1;
+        recordedL.fill(0.0f, fallbackFrames);
+        recordedR.fill(0.0f, fallbackFrames);
+    }
+
+    if (sampleRate <= 0.0) {
+        sampleRate = m_audioInputCapture->sampleRate();
+    }
+
+    // 録音テイクはクリップ内PCMだけでなく WAV も保存しておき、
+    // 後続の保存/再読み込みや波形表示で再利用できるようにする。
+    QString filePath;
+    QString errorMessage;
+    const QString candidatePath = makeRecordingFilePath();
+    if (sampleRate > 0.0 &&
+        WavWriter::writeStereo16(candidatePath, recordedL, recordedR,
+                                 static_cast<int>(sampleRate), &errorMessage)) {
+        filePath = candidatePath;
+    } else if (!errorMessage.isEmpty()) {
+        qWarning() << "PlaybackController: 録音 WAV の保存に失敗:" << errorMessage;
+    }
+
+    Clip* clip = m_recordTrack->addClip(m_recordStartTick, durationTicks);
+    clip->setAudioData(recordedL, recordedR, sampleRate, filePath);
+    return clip;
+}
+
+Clip* PlaybackController::finalizeMidiRecordingLocked(qint64 recordEndTick)
+{
+    if (!m_recordTrack) {
+        return nullptr;
+    }
+
+    QVector<RecordedMidiNote> finishedNotes;
+    {
+        QMutexLocker locker(&m_recordMutex);
+        finishedNotes = m_recordedMidiNotes;
+        for (const ActiveRecordedMidiNote& active : std::as_const(m_activeRecordedMidiNotes)) {
+            RecordedMidiNote note;
+            note.pitch = active.pitch;
+            note.startTick = active.startTick;
+            note.durationTicks =
+                std::max<qint64>(1, (recordEndTick - m_recordStartTick) - active.startTick);
+            note.velocity = active.velocity;
+            finishedNotes.push_back(note);
+        }
+        m_recordedMidiNotes.clear();
+        m_activeRecordedMidiNotes.clear();
+    }
+
+    const qint64 durationTicks = std::max<qint64>(1, recordEndTick - m_recordStartTick);
+    // ノートが1つも無いテイクでも、録音した長さ自体はクリップとして残す。
+    Clip* clip = m_recordTrack->addClip(m_recordStartTick, durationTicks);
+    for (const RecordedMidiNote& note : std::as_const(finishedNotes)) {
+        clip->addNote(note.pitch, note.startTick, note.durationTicks, note.velocity);
+    }
+    return clip;
+}
+
 void PlaybackController::updateUiTimerInterval()
 {
     if (!m_uiTimer) {
@@ -251,6 +632,9 @@ void PlaybackController::updateUiTimerInterval()
 
 void PlaybackController::suspendForExport()
 {
+    if (m_isRecording.load()) {
+        stopRecording();
+    }
     // 再生中なら停止
     if (m_isPlaying.load()) {
         stop();
@@ -391,6 +775,17 @@ void PlaybackController::audioRenderCallback(float* outputBuffer, int numFrames,
     transport.timeSigNumerator = 4;   // TODO: プロジェクトの拍子設定から取得
     transport.timeSigDenominator = 4;
     transport.ticksPerBeat = Project::TICKS_PER_BEAT;
+
+    QVector<LiveMidiMessage> liveMidiMessages;
+    {
+        QMutexLocker locker(&m_liveMidiMutex);
+        if (!m_liveMidiMessages.isEmpty()) {
+            // ライブMIDIはUIスレッド/WinMMコールバック側から積まれるので、
+            // バッファ先頭でまとめてスワップし、以降はオーディオスレッド専用で扱う。
+            liveMidiMessages = m_liveMidiMessages;
+            m_liveMidiMessages.clear();
+        }
+    }
 
     // ── フォルダバスの初期化 ──
     // フォルダトラックごとにバスバッファを確保・ゼロクリア
@@ -546,6 +941,24 @@ void PlaybackController::audioRenderCallback(float* outputBuffer, int numFrames,
                     }
                 }
 
+            }
+
+            for (const LiveMidiMessage& liveMessage : std::as_const(liveMidiMessages)) {
+                if (liveMessage.trackId != track->id()) {
+                    continue;
+                }
+
+                // 物理MIDI入力は再生状態に関係なくここへ混ぜ込む。
+                // これにより、停止中でも選択トラックの音源を鍵盤で試奏できる。
+                VST3PluginInstance::MidiEvent liveEvent {};
+                liveEvent.sampleOffset = std::clamp(liveMessage.sampleOffset, 0, numFrames - 1);
+                liveEvent.type = liveMessage.type;
+                liveEvent.pitch = liveMessage.pitch;
+                liveEvent.velocity = liveMessage.velocity;
+                trackEvents.push_back(liveEvent);
+            }
+
+            if (!trackEvents.empty()) {
                 std::sort(trackEvents.begin(), trackEvents.end(),
                           [](const auto& a, const auto& b) {
                               return a.sampleOffset < b.sampleOffset;
