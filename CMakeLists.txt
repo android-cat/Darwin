@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Darwin VERSION 1.0.5 LANGUAGES CXX)
+project(Darwin VERSION 1.10 LANGUAGES CXX)
 
 include(CTest)
 
