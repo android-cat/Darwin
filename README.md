@@ -5,17 +5,21 @@ Qt6/C++ で構築されたオープンソースのデジタルオーディオワ
 
 ## 主な機能
 
-- **アレンジメントビュー** — トラックの管理・クリップの配置・フォルダトラックのネスト
+- **アレンジメントビュー** — トラックの管理・クリップの配置・フォルダトラックのネスト・クリップ分割・ドラッグ&ドロップ並べ替え
 - **ピアノロール** — ノートの編集・ベロシティレーン・クォンタイズ対応
-- **ミキサービュー** — フォルダトラック対応のミキシングコンソール・フェーダー・ノブ
-- **VST3 プラグインホスティング** — VST3 インストゥルメント/エフェクトのスキャン・ロード・GUI 表示
+- **エクスプレッションレーン** — MIDI CC (CC1–127)・ピッチベンド・チャンネルアフタータッチのブレークポイント編集
+- **ミキサービュー** — フォルダトラック対応の階層型ミキシングコンソール・フェーダー・ノブ・ミュート/ソロ/パン
+- **VST3 プラグインホスティング** — VST3 インストゥルメント/エフェクトのスキャン・ロード・GUI 表示（プラグインエディタビュー）
 - **リアルタイムオーディオ出力** — Windows は WASAPI、macOS は CoreAudio / AudioUnit 経由
 - **オーディオファイル対応** — WAV / MP3 / M4A のインポート・波形表示・再生
 - **録音入力** — Windows は WASAPI キャプチャ、macOS は CoreAudio 入力
 - **MIDI 入力** — Windows は WinMM、macOS は CoreMIDI
 - **MIDI ファイルインポート**
+- **マーカー/フラグ** — タイムライン上のマーカー配置・ナビゲーション
+- **エクスポート範囲選択** — タイムライン上で任意の範囲を指定してオーディオエクスポート
+- **コード検出** — ノートからリアルタイムにコード名を検出（メジャー/マイナー/ディミニッシュ/オーギュメント/sus/7th 等）
 - **アンドゥ/リドゥ** — コマンドパターンによる完全な操作履歴管理
-- **テーマ管理** — カスタムダークテーマ
+- **テーマ管理** — カスタムダークテーマ・統一フォント管理
 
 ## 動作環境
 
@@ -123,16 +127,17 @@ Darwin/
 ├── src/
 │   ├── main.cpp
 │   ├── MainWindow.cpp/.h
-│   ├── audio/          # AudioEngine (Windows: WASAPI / macOS: AudioUnit), AudioExporter
+│   ├── audio/          # AudioEngine, AudioEngineBackend, AudioInputCapture, AudioExporter
 │   ├── commands/       # UndoCommands (Command パターン)
-│   ├── common/         # 定数, テーマ, MIDI/オーディオユーティリティ
-│   ├── controllers/    # PlaybackController
-│   ├── models/         # Project / Track / Clip / Note
-│   ├── plugins/        # VST3Scanner, VST3PluginInstance
-│   ├── views/          # Arrangement, PianoRoll, Mix, Compose, Source
-│   └── widgets/        # 汎用 UI コンポーネント
-├── docs/               # アーキテクチャ設計書
+│   ├── common/         # 定数, テーマ, ChordDetector, FontManager, MIDI/オーディオユーティリティ
+│   ├── controllers/    # PlaybackController, MidiInputDevice
+│   ├── models/         # Project / Track / Clip / Note / CCEvent
+│   ├── plugins/        # VST3Scanner, VST3PluginInstance, VST3MetadataProbe
+│   ├── views/          # Arrangement, PianoRoll, Mix, Compose, Source, PluginEditor
+│   └── widgets/        # Fader, Knob, LevelMeter, MixerChannel 等の汎用 UI コンポーネント
+├── docs/               # アーキテクチャ・コーディング規約等の設計書
 ├── icons/              # アプリケーションアイコン
+├── packaging/          # macOS 配布用リソース (entitlements 等)
 ├── CMakeLists.txt
 └── resources.qrc
 ```
@@ -143,6 +148,9 @@ Darwin/
 - [macOS対応設計書](docs/macos_support_design.md)
 - [クラス図](docs/class_diagram.md)
 - [データフロー](docs/data_flow.md)
+- [コーディング規約](docs/coding_standards.md)
+- [補足設計書](docs/supplementary_designs.md)
+- [タスクリスト](docs/task_list.md)
 
 ## ライセンス
 
