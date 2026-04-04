@@ -1,7 +1,7 @@
 ; Darwin DAW - Inno Setup Script
 
 #define MyAppName "Darwin"
-#define MyAppVersion "1.05"
+#define MyAppVersion "1.10"
 #define MyAppPublisher "Darwin Team"
 #define MyAppURL "https://github.com/user/Darwin"
 #define MyAppExeName "Darwin.exe"

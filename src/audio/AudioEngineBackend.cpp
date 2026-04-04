@@ -15,7 +15,6 @@
 #define NOMINMAX
 #endif
 #include <Windows.h>
-#include <Functiondiscoverykeys_devpkey.h>
 #include <audioclient.h>
 #include <avrt.h>
 #include <mmdeviceapi.h>
