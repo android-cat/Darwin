@@ -2,7 +2,9 @@
 
 #include <QObject>
 #include <QMutex>
+#include <QVector>
 #include <atomic>
+#include <cstdint>
 #include <functional>
 
 #ifdef Q_OS_WIN
@@ -11,6 +13,8 @@
 #endif
 #include <Windows.h>
 #include <mmsystem.h>
+#elif defined(Q_OS_MAC)
+#include <CoreMIDI/CoreMIDI.h>
 #endif
 
 class MidiInputDevice : public QObject
@@ -49,6 +53,15 @@ private:
 
     HMIDIIN m_handle = nullptr;
     UINT m_deviceId = 0;
+#elif defined(Q_OS_MAC)
+    static void midiReadProc(const MIDIPacketList* packetList,
+                             void* readProcRefCon,
+                             void* srcConnRefCon);
+    void handlePacketList(const MIDIPacketList* packetList);
+
+    MIDIClientRef m_client = 0;
+    MIDIPortRef m_inputPort = 0;
+    QVector<MIDIEndpointRef> m_sources;
 #endif
 
     MessageCallback m_callback;

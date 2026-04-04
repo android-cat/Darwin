@@ -3,7 +3,7 @@
 /**
  * @brief オーディオファイルの読み込みユーティリティ
  *
- * WAVはネイティブ解析、MP3/M4AはWindows Media Foundation経由でデコードする。
+ * WAVはネイティブ解析、MP3/M4AはOSネイティブのデコーダ経由でデコードする。
  * デコード済みPCMデータと波形プレビューを返却する。
  */
 
@@ -55,6 +55,6 @@ private:
     /** WAVファイルをネイティブ解析 */
     static AudioFileData readWav(const QString& filePath);
 
-    /** Windows Media Foundationでデコード（MP3, M4A等） */
-    static AudioFileData readWithMF(const QString& filePath);
+    /** OSネイティブデコーダで圧縮音声をデコード（MP3, M4A等） */
+    static AudioFileData readCompressedAudio(const QString& filePath);
 };

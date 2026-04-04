@@ -27,6 +27,7 @@
 #include "models/Project.h"
 #include "models/Track.h"
 #include "PluginEditorWidget.h"
+#include "common/FontManager.h"
 #include "common/ThemeManager.h"
 
 // ─── SourceView ──────────────────────────────────────────
@@ -356,7 +357,7 @@ void SourceView::applyTheme()
             QListWidget {
                 border: none;
                 background-color: transparent;
-                font-family: 'Segoe UI', sans-serif;
+                font-family: %5;
                 font-size: 12px;
                 outline: none;
             }
@@ -383,7 +384,8 @@ void SourceView::applyTheme()
         )").arg(tm.textColor().name(),
                 tm.gridLineSubBeatColor().name(),
                 tm.backgroundColor().name(),
-                tm.isDarkMode() ? "#3f1a26" : "#fff0f3"));
+                tm.isDarkMode() ? "#3f1a26" : "#fff0f3",
+                Darwin::FontManager::uiFontCss()));
         
         // 強制的にリストアイテムのテキスト色も更新する
         for (int i = 0; i < m_instrumentList->count(); ++i) {
@@ -691,10 +693,11 @@ void SourceView::revealNextItem()
             fadeLabel->setGeometry(itemRect);
             fadeLabel->setStyleSheet(
                 QString("padding: 10px 12px; border: 1px solid %3; border-radius: 4px; "
-                "color: %1; background: %2; font-family: 'Segoe UI', sans-serif; font-size: 12px;")
+                "color: %1; background: %2; font-family: %4; font-size: 12px;")
                 .arg(Darwin::ThemeManager::instance().textColor().name(),
                      Darwin::ThemeManager::instance().backgroundColor().name(),
-                     Darwin::ThemeManager::instance().backgroundColor().name())
+                     Darwin::ThemeManager::instance().backgroundColor().name(),
+                     Darwin::FontManager::uiFontCss())
             );
             fadeLabel->show();
             
@@ -748,5 +751,4 @@ void SourceView::animateDetailCard(const VST3PluginInfo& info)
     
     fadeOut->start(QAbstractAnimation::DeleteWhenStopped);
 }
-
 

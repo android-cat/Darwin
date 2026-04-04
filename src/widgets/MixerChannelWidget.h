@@ -42,7 +42,7 @@ protected:
 
 private:
     void animateFxBurst(QPushButton* btn);
-    void animateFxAppear(int fxIndex);
+    void animateFxAppear(int fxIndex, int retryCount = 0);
     void showFxPluginMenuAfterScan(
         std::function<void(QVector<VST3PluginInfo>&)> loadUsageData,
         std::function<void(const QString&)> saveUsageData);

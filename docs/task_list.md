@@ -73,7 +73,7 @@
     - [x] VST3PluginHost（DLLロード、ファクトリ取得）
     - [x] VST3PluginInstance（コンポーネント初期化、ライフサイクル管理）
 - [x] プラグインGUI表示
-    - [x] PluginEditorWidget（IPlugView → Qt HWND 埋め込み）
+    - [x] PluginEditorWidget（IPlugView → Qtネイティブビュー埋め込み）
     - [x] IPlugFrame 実装（リサイズ対応）
 - [x] トラック統合
     - [x] Track にプラグインインスタンス紐づけ
@@ -108,8 +108,8 @@
 
 ## Phase 9: オーディオエンジン [COMPLETE]
 - [x] 基本オーディオ出力
-    - [x] WASAPI共有モード・イベント駆動型エンジン (AudioEngine)
-    - [x] レンダリングスレッド（MMCSS Pro Audio優先度）
+    - [x] OSネイティブ音声APIベースのエンジン (AudioEngine)
+    - [x] Windows: MMCSSレンダリングスレッド / macOS: AudioUnitコールバック
     - [x] コールバック方式でのバッファ充填
 - [x] MIDIシーケンサー
     - [x] PlaybackControllerからクリップ/ノートのMIDIイベント収集
@@ -118,7 +118,25 @@
 - [x] オーディオミキシング
     - [x] トラックごとのボリューム・パン適用
     - [x] 全トラックのミックスダウン
-    - [x] インターリーブ出力（WASAPI対応）
+    - [x] インターリーブ出力（OSネイティブ出力対応）
+
+## Phase 11: macOS対応 [COMPLETE]
+- [x] CMakeでApple向けVST3 Hostingソースとフレームワークを条件付きリンク
+- [x] AudioEngine / AudioInputCapture を macOS の CoreAudio / AudioUnit に対応
+- [x] MidiInputDevice を CoreMIDI に対応
+- [x] VST3Scanner と PluginEditorWidget を macOS のバンドル / NSView に対応
+- [x] AudioFileReader の MP3 / M4A 読み込みを ExtAudioFile に対応
+- [x] README / 設計書 / 実行スクリプトを macOS 向けに更新
+- [x] UIフォント管理を FontManager に集約し、Windows / macOS の両方で一元制御できるようにした
+- [x] macOS のハンバーガーメニューでもショートカット表示と発火が安定するよう改善
+- [x] macOS の VST3 スキャンで、fallback ロードを main thread に寄せてクラッシュしにくくした
+- [x] macOS の VST3 スキャンで、`Info.plist` と Hosting Module を使って vendor / version を補完できるようにした
+- [x] macOS の VST3 スキャンで、危険な Hosting Module fallback を helper process に隔離した
+- [x] macOS の PluginEditorWidget で、NSView の座標系と focus を見直して GUI を操作しやすくした
+- [x] macOS の PluginEditorWidget で、スクロール時に NSView がペイン外へはみ出さないよう native viewport clip を追加した
+- [x] PluginEditorWidget で、Windows / macOS ともに親UIとの入力競合時はプラグインビューを優先するよう調整した
+- [x] macOS の PluginEditorWidget で、viewport リサイズと embedded NSView の frame 同期を追加し、ペイン拡大縮小への追従を安定化した
+- [x] macOS の配布向けに `.app` / `.dmg` 生成、任意の `codesign` / notarize を行う `package_macos.sh` を追加した
 
 ## Phase 10: コード整備 [COMPLETE]
 - [x] フォルダリオーガナイズ

@@ -13,6 +13,7 @@
 #include <QPainter>
 #include "common/Constants.h"
 #include "common/BurstAnimationHelper.h"
+#include "common/FontManager.h"
 #include "common/ThemeManager.h"
 
 using namespace Darwin;
@@ -266,7 +267,7 @@ void PianoRollGridWidget::paintEvent(QPaintEvent *event)
     } else if (!m_project) {
         // プロジェクトもクリップもない場合のみテキスト表示
         p.setPen(ThemeManager::instance().secondaryTextColor());
-        p.setFont(QFont("Segoe UI", 12));
+        p.setFont(Darwin::FontManager::uiFont(12));
         p.drawText(rect(), Qt::AlignCenter, "Select a clip in the Arrangement View to edit notes");
     }
     

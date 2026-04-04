@@ -7,6 +7,7 @@
 #include <QPainterPath>
 #include <cmath>
 #include "common/Constants.h"
+#include "common/FontManager.h"
 #include "common/ThemeManager.h"
 
 // ─── PluginLoadOverlay ───────────────────────────────────
@@ -124,8 +125,8 @@ void PluginLoadOverlay::paintEvent(QPaintEvent*)
 
     QRectF area(rect());
     QPointF center(area.center().x(), area.center().y() - 16);
-    QFont titleFont("Segoe UI", 14, QFont::DemiBold);
-    QFont subFont("Segoe UI", 10);
+    QFont titleFont = Darwin::FontManager::uiFont(14, QFont::DemiBold);
+    QFont subFont = Darwin::FontManager::uiFont(10);
 
     // ── Loading ──
     if (m_stage == Loading) {

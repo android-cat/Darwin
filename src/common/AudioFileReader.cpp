@@ -16,6 +16,19 @@
 #include <mfidl.h>
 #include <mfreadwrite.h>
 #include <mferror.h>
+#elif defined(Q_OS_MAC)
+#include <CoreFoundation/CoreFoundation.h>
+#include <AudioToolbox/AudioToolbox.h>
+#endif
+
+#ifdef Q_OS_MAC
+namespace {
+QString formatOsStatusMessage(OSStatus status)
+{
+    return QStringLiteral("0x%1")
+        .arg(static_cast<quint32>(status), 8, 16, QChar('0'));
+}
+}
 #endif
 
 // ===== 公開API =====
@@ -34,7 +47,7 @@ AudioFileData AudioFileReader::readFile(const QString& filePath)
         return readWav(filePath);
     }
     if (lower.endsWith(".mp3") || lower.endsWith(".m4a")) {
-        return readWithMF(filePath);
+        return readCompressedAudio(filePath);
     }
 
     AudioFileData data;
@@ -258,8 +271,8 @@ AudioFileData AudioFileReader::readWav(const QString& filePath)
                 result.valid = true;
 
             } else {
-                // 非PCMフォーマット → MFでデコード
-                return readWithMF(filePath);
+                // 非PCMフォーマット → OSネイティブデコーダで展開
+                return readCompressedAudio(filePath);
             }
 
             break;
@@ -287,9 +300,9 @@ AudioFileData AudioFileReader::readWav(const QString& filePath)
     return result;
 }
 
-// ===== Windows Media Foundation デコード =====
+// ===== 圧縮音声デコード =====
 
-AudioFileData AudioFileReader::readWithMF(const QString& filePath)
+AudioFileData AudioFileReader::readCompressedAudio(const QString& filePath)
 {
     AudioFileData result;
 
@@ -408,8 +421,135 @@ AudioFileData AudioFileReader::readWithMF(const QString& filePath)
                 .arg(numFrames)
                 .arg(result.sampleRate);
 
+#elif defined(Q_OS_MAC)
+    const QByteArray nativePath = QFile::encodeName(QFileInfo(filePath).absoluteFilePath());
+    CFURLRef url = CFURLCreateFromFileSystemRepresentation(
+        kCFAllocatorDefault,
+        reinterpret_cast<const UInt8*>(nativePath.constData()),
+        nativePath.size(),
+        false);
+    if (!url) {
+        result.errorMessage = QStringLiteral("ファイルURLを作成できません: %1").arg(filePath);
+        return result;
+    }
+
+    ExtAudioFileRef audioFile = nullptr;
+    OSStatus status = ExtAudioFileOpenURL(url, &audioFile);
+    CFRelease(url);
+
+    if (status != noErr || !audioFile) {
+        result.errorMessage = QStringLiteral("ExtAudioFileOpenURL 失敗: %1")
+            .arg(formatOsStatusMessage(status));
+        return result;
+    }
+
+    AudioStreamBasicDescription fileFormat {};
+    UInt32 propertySize = sizeof(fileFormat);
+    status = ExtAudioFileGetProperty(audioFile,
+                                     kExtAudioFileProperty_FileDataFormat,
+                                     &propertySize,
+                                     &fileFormat);
+    if (status != noErr) {
+        result.errorMessage = QStringLiteral("ファイルフォーマット取得失敗: %1")
+            .arg(formatOsStatusMessage(status));
+        ExtAudioFileDispose(audioFile);
+        return result;
+    }
+
+    AudioStreamBasicDescription clientFormat {};
+    clientFormat.mSampleRate = fileFormat.mSampleRate > 0.0 ? fileFormat.mSampleRate : 44100.0;
+    clientFormat.mFormatID = kAudioFormatLinearPCM;
+    clientFormat.mFormatFlags = kAudioFormatFlagsNativeFloatPacked;
+    clientFormat.mBytesPerPacket = static_cast<UInt32>(sizeof(float) * 2);
+    clientFormat.mFramesPerPacket = 1;
+    clientFormat.mBytesPerFrame = static_cast<UInt32>(sizeof(float) * 2);
+    clientFormat.mChannelsPerFrame = 2;
+    clientFormat.mBitsPerChannel = 32;
+
+    status = ExtAudioFileSetProperty(audioFile,
+                                     kExtAudioFileProperty_ClientDataFormat,
+                                     sizeof(clientFormat),
+                                     &clientFormat);
+    if (status != noErr) {
+        result.errorMessage = QStringLiteral("クライアントフォーマット設定失敗: %1")
+            .arg(formatOsStatusMessage(status));
+        ExtAudioFileDispose(audioFile);
+        return result;
+    }
+
+    SInt64 fileLengthFrames = 0;
+    propertySize = sizeof(fileLengthFrames);
+    if (ExtAudioFileGetProperty(audioFile,
+                                kExtAudioFileProperty_FileLengthFrames,
+                                &propertySize,
+                                &fileLengthFrames) != noErr) {
+        fileLengthFrames = 0;
+    }
+
+    QVector<float> interleavedSamples;
+    if (fileLengthFrames > 0) {
+        interleavedSamples.reserve(static_cast<int>(fileLengthFrames * 2));
+    }
+
+    constexpr UInt32 chunkFrames = 4096;
+    std::vector<float> chunkBuffer(static_cast<size_t>(chunkFrames) * 2u, 0.0f);
+
+    for (;;) {
+        UInt32 framesToRead = chunkFrames;
+        AudioBufferList bufferList {};
+        bufferList.mNumberBuffers = 1;
+        bufferList.mBuffers[0].mNumberChannels = 2;
+        bufferList.mBuffers[0].mDataByteSize = static_cast<UInt32>(chunkBuffer.size() * sizeof(float));
+        bufferList.mBuffers[0].mData = chunkBuffer.data();
+
+        status = ExtAudioFileRead(audioFile, &framesToRead, &bufferList);
+        if (status != noErr) {
+            result.errorMessage = QStringLiteral("ExtAudioFileRead 失敗: %1")
+                .arg(formatOsStatusMessage(status));
+            ExtAudioFileDispose(audioFile);
+            return result;
+        }
+        if (framesToRead == 0) {
+            break;
+        }
+
+        const int sampleCount = static_cast<int>(framesToRead * 2);
+        const int oldSize = interleavedSamples.size();
+        interleavedSamples.resize(oldSize + sampleCount);
+        std::memcpy(interleavedSamples.data() + oldSize,
+                    chunkBuffer.data(),
+                    static_cast<size_t>(sampleCount) * sizeof(float));
+    }
+
+    ExtAudioFileDispose(audioFile);
+
+    if (interleavedSamples.isEmpty()) {
+        result.errorMessage = QStringLiteral("デコード結果が空です");
+        return result;
+    }
+
+    const int numFrames = interleavedSamples.size() / 2;
+    result.samplesL.resize(numFrames);
+    result.samplesR.resize(numFrames);
+
+    for (int i = 0; i < numFrames; ++i) {
+        result.samplesL[i] = interleavedSamples[i * 2];
+        result.samplesR[i] = interleavedSamples[i * 2 + 1];
+    }
+
+    result.sampleRate = clientFormat.mSampleRate;
+    result.channels = 2;
+    result.valid = true;
+    result.waveformPreview = generateWaveformPreview(
+        result.samplesL, result.samplesR, 2048);
+
+    qDebug() << QStringLiteral("ExtAudioFileデコード完了: %1 (%2 frames, %3 Hz)")
+                .arg(filePath)
+                .arg(numFrames)
+                .arg(result.sampleRate);
+
 #else
-    result.errorMessage = QStringLiteral("MP3/M4AデコードはWindowsのみサポートされます");
+    result.errorMessage = QStringLiteral("MP3/M4AデコードはこのOSでは未対応です");
 #endif
 
     return result;

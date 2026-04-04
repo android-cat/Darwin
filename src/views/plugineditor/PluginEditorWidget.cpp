@@ -1,5 +1,8 @@
 #include "PluginEditorWidget.h"
 #include "VST3PluginInstance.h"
+#ifdef Q_OS_MAC
+#include "MacNativeViewUtils.h"
+#endif
 
 // VST3 SDK ヘッダー
 #include "pluginterfaces/gui/iplugview.h"
@@ -7,13 +10,18 @@
 
 #include <QLabel>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QWindow>
 #include <QScreen>
 #include <QApplication>
 #include <QDebug>
 #include <QPainter>
 #include <QPaintEvent>
+#include <QEvent>
+#include <QContextMenuEvent>
 #include <QMouseEvent>
+#include <QTabletEvent>
+#include <QTouchEvent>
 #include <QWheelEvent>
 #include <QResizeEvent>
 
@@ -27,14 +35,34 @@
 using namespace Steinberg;
 
 // ウィジェットのDPIスケール倍率を取得するユーティリティ
-// Qt6のHigh DPIスケーリングにより、Qt論理ピクセルとデバイスピクセルにずれが生じる
+// Qt6のHigh DPIスケーリングにより、Qt論理ピクセルとデバイスピクセルにずれが生じる。
+// ただし macOS の NSView 埋め込みは Cocoa の point 座標で扱うため 1.0 固定にする。
 static double getDevicePixelRatio(const QWidget* widget)
 {
+#ifdef Q_OS_MAC
+    Q_UNUSED(widget);
+    return 1.0;
+#else
     if (widget && widget->screen()) {
         return widget->screen()->devicePixelRatio();
     }
     return qApp->devicePixelRatio();
+#endif
 }
+
+#ifdef Q_OS_MAC
+// macOS の native viewport / container に clip を再同期する。
+// QScrollArea のスクロール後も NSView が sibling 領域へはみ出さないようにする。
+static void syncMacNativeClipState(QScrollArea* scrollArea, QWidget* container)
+{
+    if (container) {
+        Darwin::prepareMacClipWidget(container);
+        Darwin::synchronizeMacClipWidget(container);
+    }
+
+    Q_UNUSED(scrollArea);
+}
+#endif
 
 // ========== IPlugFrame実装 ==========
 
@@ -75,6 +103,7 @@ ScaledPluginDisplay::ScaledPluginDisplay(QWidget* parent)
     , m_nativeHeight(0)
 {
     setMouseTracking(true);
+    setAttribute(Qt::WA_NoMousePropagation);
     setFocusPolicy(Qt::ClickFocus);
     setStyleSheet("background-color: #1a1a2e;");
 }
@@ -151,6 +180,7 @@ void ScaledPluginDisplay::mousePressEvent(QMouseEvent* event)
     else if (event->button() == Qt::MiddleButton) msg = WM_MBUTTONDOWN;
     forwardMouseEvent(event, msg);
 #endif
+    event->accept();
     emit userInteracted();
 }
 
@@ -162,6 +192,7 @@ void ScaledPluginDisplay::mouseReleaseEvent(QMouseEvent* event)
     else if (event->button() == Qt::MiddleButton) msg = WM_MBUTTONUP;
     forwardMouseEvent(event, msg);
 #endif
+    event->accept();
     emit userInteracted();
 }
 
@@ -172,6 +203,7 @@ void ScaledPluginDisplay::mouseMoveEvent(QMouseEvent* event)
 #else
     Q_UNUSED(event);
 #endif
+    event->accept();
 }
 
 void ScaledPluginDisplay::mouseDoubleClickEvent(QMouseEvent* event)
@@ -182,6 +214,7 @@ void ScaledPluginDisplay::mouseDoubleClickEvent(QMouseEvent* event)
     else if (event->button() == Qt::MiddleButton) msg = WM_MBUTTONDBLCLK;
     forwardMouseEvent(event, msg);
 #endif
+    event->accept();
     emit userInteracted();
 }
 
@@ -195,10 +228,11 @@ void ScaledPluginDisplay::wheelEvent(QWheelEvent* event)
     LPARAM lParam = MAKELPARAM(native.x(), native.y());
     WPARAM wParam = MAKEWPARAM(0, static_cast<short>(event->angleDelta().y()));
     PostMessage(containerHwnd, WM_MOUSEWHEEL, wParam, lParam);
-    emit userInteracted();
 #else
     Q_UNUSED(event);
 #endif
+    event->accept();
+    emit userInteracted();
 }
 
 // ========== PluginEditorWidget ==========
@@ -217,9 +251,11 @@ PluginEditorWidget::PluginEditorWidget(QWidget* parent)
     , m_nativeHeight(0)
     , m_supportsResize(false)
     , m_bitmapCaptureActive(false)
+    , m_deferredViewSyncPending(false)
 {
     // ウィジェットが親レイアウト内で最大限に広がるように設定
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
     // スケール率表示ラベル（右下にオーバーレイ表示）
     m_scaleLabel = new QLabel(this);
@@ -227,6 +263,7 @@ PluginEditorWidget::PluginEditorWidget(QWidget* parent)
         "QLabel { background-color: rgba(0,0,0,160); color: #fff; "
         "padding: 2px 8px; border-radius: 4px; font-size: 11px; }");
     m_scaleLabel->setAlignment(Qt::AlignCenter);
+    m_scaleLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
     m_scaleLabel->hide();
 
     // キャプチャタイマー接続
@@ -259,6 +296,49 @@ void PluginEditorWidget::resizeEvent(QResizeEvent* event)
     // プラグインが開いていればスケールモードを更新
     if (m_plugView && m_nativeWidth > 0 && m_nativeHeight > 0) {
         updateScaleMode();
+        scheduleDeferredViewSync();
+    }
+
+#ifdef Q_OS_MAC
+    syncMacNativeClipState(m_scrollArea, m_container);
+#endif
+}
+
+bool PluginEditorWidget::eventFilter(QObject* watched, QEvent* event)
+{
+    if (shouldScheduleViewSync(watched, event)) {
+        scheduleDeferredViewSync();
+#ifdef Q_OS_MAC
+        syncMacNativeClipState(m_scrollArea, m_container);
+#endif
+    }
+
+    if (m_plugView && shouldConsumePriorityEvent(watched, event)) {
+        event->accept();
+        return true;
+    }
+
+    return QWidget::eventFilter(watched, event);
+}
+
+bool PluginEditorWidget::shouldScheduleViewSync(QObject* watched, QEvent* event) const
+{
+    if (!m_plugView || !watched || !event) {
+        return false;
+    }
+
+    const QWidget* viewport = m_scrollArea ? m_scrollArea->viewport() : nullptr;
+    if (watched != m_scrollArea && watched != viewport && watched != m_container) {
+        return false;
+    }
+
+    switch (event->type()) {
+    case QEvent::Resize:
+    case QEvent::Show:
+    case QEvent::ShowToParent:
+        return true;
+    default:
+        return false;
     }
 }
 
@@ -266,8 +346,8 @@ void PluginEditorWidget::updateScaleMode()
 {
     if (!m_plugView || m_nativeWidth <= 0 || m_nativeHeight <= 0) return;
 
-    int availW = width();
-    int availH = height();
+    int availW = m_scrollArea ? m_scrollArea->viewport()->width() : width();
+    int availH = m_scrollArea ? m_scrollArea->viewport()->height() : height();
     if (availW <= 0 || availH <= 0) return;
 
     // プラグインのネイティブサイズ（デバイスピクセル）をQt論理ピクセルに変換
@@ -315,6 +395,7 @@ void PluginEditorWidget::updateScaleMode()
         int logicalH = qMax(1, static_cast<int>(actualDevH / dpr));
         if (m_container) {
             m_container->setFixedSize(logicalW, logicalH);
+            m_container->updateGeometry();
         }
         // スクロールバーを必要に応じて表示（パネルが小さい場合に対応）
         if (m_scrollArea) {
@@ -342,12 +423,137 @@ void PluginEditorWidget::updateScaleMode()
         // コンテナをネイティブサイズに設定（スクロールエリアがはみ出しを処理）
         if (m_container) {
             m_container->setFixedSize(logicalW, logicalH);
+            m_container->updateGeometry();
         }
         // スクロールバーを必要に応じて表示
         if (m_scrollArea) {
             m_scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
             m_scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
         }
+    }
+
+#ifdef Q_OS_MAC
+    syncMacNativeClipState(m_scrollArea, m_container);
+#endif
+}
+
+void PluginEditorWidget::scheduleDeferredViewSync()
+{
+    if (!m_plugView || m_deferredViewSyncPending) {
+        return;
+    }
+
+    m_deferredViewSyncPending = true;
+    QTimer::singleShot(0, this, [this]() {
+        m_deferredViewSyncPending = false;
+        if (!m_plugView || m_nativeWidth <= 0 || m_nativeHeight <= 0) {
+            return;
+        }
+
+        updateScaleMode();
+    });
+}
+
+void PluginEditorWidget::setPluginInputPriority(bool active)
+{
+    setAttribute(Qt::WA_TransparentForMouseEvents, !active);
+
+    if (m_scrollArea) {
+        m_scrollArea->removeEventFilter(this);
+        m_scrollArea->setAttribute(Qt::WA_NoMousePropagation, false);
+
+        QWidget* viewport = m_scrollArea->viewport();
+        if (viewport) {
+            viewport->removeEventFilter(this);
+            viewport->setAttribute(Qt::WA_NoMousePropagation, false);
+            if (active) {
+                m_scrollArea->installEventFilter(this);
+                viewport->installEventFilter(this);
+            }
+        }
+    }
+
+    if (m_container) {
+        m_container->setAttribute(Qt::WA_NoMousePropagation, active);
+        m_container->removeEventFilter(this);
+        if (active) {
+            m_container->installEventFilter(this);
+        }
+    }
+
+    if (m_scaledDisplay) {
+        m_scaledDisplay->setAttribute(Qt::WA_NoMousePropagation, active);
+    }
+}
+
+bool PluginEditorWidget::shouldConsumePriorityEvent(QObject* watched, QEvent* event) const
+{
+    if (!watched || !event) {
+        return false;
+    }
+
+    const QWidget* viewport = m_scrollArea ? m_scrollArea->viewport() : nullptr;
+    if (watched != m_container && watched != viewport) {
+        return false;
+    }
+
+    auto eventPosInWatched = [event]() -> QPoint {
+        switch (event->type()) {
+        case QEvent::MouseButtonPress:
+        case QEvent::MouseButtonRelease:
+        case QEvent::MouseButtonDblClick:
+        case QEvent::MouseMove:
+            return static_cast<QMouseEvent*>(event)->position().toPoint();
+        case QEvent::Wheel:
+            return static_cast<QWheelEvent*>(event)->position().toPoint();
+        case QEvent::ContextMenu:
+            return static_cast<QContextMenuEvent*>(event)->pos();
+        case QEvent::TabletPress:
+        case QEvent::TabletMove:
+        case QEvent::TabletRelease:
+            return static_cast<QTabletEvent*>(event)->position().toPoint();
+        case QEvent::TouchBegin:
+        case QEvent::TouchUpdate:
+        case QEvent::TouchEnd: {
+            const auto& points = static_cast<QTouchEvent*>(event)->points();
+            if (!points.isEmpty()) {
+                return points.constFirst().position().toPoint();
+            }
+            break;
+        }
+        default:
+            break;
+        }
+
+        return QPoint(-1, -1);
+    };
+
+    // viewport 全体を丸ごと優先すると splitter や余白まで巻き込むので、
+    // 実際のプラグイン表示領域に入っているときだけ親UIへの伝播を止める。
+    if (watched == viewport && m_container) {
+        const QPoint eventPos = eventPosInWatched();
+        if (eventPos.x() < 0 || !m_container->geometry().contains(eventPos)) {
+            return false;
+        }
+    }
+
+    switch (event->type()) {
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonRelease:
+    case QEvent::MouseButtonDblClick:
+    case QEvent::MouseMove:
+    case QEvent::Wheel:
+    case QEvent::ContextMenu:
+    case QEvent::NativeGesture:
+    case QEvent::TabletPress:
+    case QEvent::TabletMove:
+    case QEvent::TabletRelease:
+    case QEvent::TouchBegin:
+    case QEvent::TouchUpdate:
+    case QEvent::TouchEnd:
+        return true;
+    default:
+        return false;
     }
 }
 
@@ -364,6 +570,7 @@ void PluginEditorWidget::updateContainerSize(int w, int h)
 
     if (m_container) {
         m_container->setFixedSize(logicalW, logicalH);
+        m_container->updateGeometry();
     }
     if (m_offscreenHost) {
         // オフスクリーンホストはプラグインの実描画用なのでネイティブサイズ
@@ -375,6 +582,11 @@ void PluginEditorWidget::updateContainerSize(int w, int h)
         m_scaledDisplay->setNativeSize(w, h);
         updateScaleMode();
     }
+    scheduleDeferredViewSync();
+
+#ifdef Q_OS_MAC
+    syncMacNativeClipState(m_scrollArea, m_container);
+#endif
 }
 
 bool PluginEditorWidget::openEditor(VST3PluginInstance* instance)
@@ -396,10 +608,17 @@ bool PluginEditorWidget::openEditor(VST3PluginInstance* instance)
 
     qDebug() << "PluginEditor: IPlugView created successfully";
 
+#if defined(Q_OS_WIN) || defined(Q_OS_MAC)
+    const char* platformType = nullptr;
 #ifdef Q_OS_WIN
-    // プラットフォーム確認
-    if (m_plugView->isPlatformTypeSupported(kPlatformTypeHWND) != kResultTrue) {
-        qWarning() << "PluginEditor: HWND platform not supported";
+    platformType = kPlatformTypeHWND;
+#elif defined(Q_OS_MAC)
+    platformType = kPlatformTypeNSView;
+#endif
+
+    if (!platformType ||
+        m_plugView->isPlatformTypeSupported(platformType) != kResultTrue) {
+        qWarning() << "PluginEditor: 対応するプラットフォームビューがありません";
         m_plugView->release();
         m_plugView = nullptr;
         return false;
@@ -440,6 +659,12 @@ bool PluginEditorWidget::openEditor(VST3PluginInstance* instance)
     m_scrollArea->setFrameShape(QFrame::NoFrame);
     m_scrollArea->setWidgetResizable(false);  // コンテナサイズは手動管理
     m_scrollArea->setAlignment(Qt::AlignCenter);
+    m_scrollArea->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    m_scrollArea->setSizeAdjustPolicy(QAbstractScrollArea::AdjustIgnored);
+    m_scrollArea->setMinimumSize(0, 0);
+    m_scrollArea->setFocusPolicy(Qt::NoFocus);
+    m_scrollArea->viewport()->setFocusPolicy(Qt::NoFocus);
+    m_scrollArea->viewport()->setMinimumSize(0, 0);
     m_scrollArea->setStyleSheet(
         "QScrollArea { background-color: #1a1a2e; }"
         "QScrollBar:vertical { background: #2a2a3e; width: 10px; }"
@@ -449,44 +674,71 @@ bool PluginEditorWidget::openEditor(VST3PluginInstance* instance)
         "QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }"
     );
     m_scrollArea->setGeometry(rect());
+    m_scrollArea->viewport()->setStyleSheet("background-color: #1a1a2e;");
 
-    // コンテナウィジェット作成（スクロールエリアのviewportに配置される）
-    // Qt論理ピクセルで設定することで、実際のHWNDサイズがネイティブサイズと一致する
+    // QtのネイティブビューにVST3 GUIを直接アタッチする。
     m_container = new QWidget();
     m_container->setAttribute(Qt::WA_NativeWindow);
+    m_container->setAttribute(Qt::WA_InputMethodEnabled);
+    m_container->setAttribute(Qt::WA_NoMousePropagation);
+    m_container->setFocusPolicy(Qt::StrongFocus);
+    m_container->setMouseTracking(true);
     m_container->setFixedSize(logicalW, logicalH);
+    setFocusProxy(m_container);
 
-    // スクロールエリアにコンテナを設定（m_containerがviewportの子に移動する）
-    // ※ setWidget()呼び出し後にwinId()を取得することで、正しい親HWNDの元での
-    //   HWNDが確定し、プラグインに渡すHWNDが確実に正しくなる
     m_scrollArea->setWidget(m_container);
     m_scrollArea->show();
     m_container->show();
 
-    // ダイレクトモードで開始
     m_scaleFactor = 1.0;
+    setPluginInputPriority(true);
 
-    // プラグインをアタッチ（setWidget後にwinId取得 → 正しいHWND）
-    HWND hwnd = reinterpret_cast<HWND>(m_container->winId());
-    qDebug() << "PluginEditor: Attaching to HWND:" << hwnd;
+#ifdef Q_OS_MAC
+    syncMacNativeClipState(m_scrollArea, m_container);
+#endif
 
-    tresult result = m_plugView->attached(reinterpret_cast<void*>(hwnd), kPlatformTypeHWND);
+    void* nativeHostView = reinterpret_cast<void*>(m_container->winId());
+    tresult result = m_plugView->attached(nativeHostView, platformType);
     if (result != kResultTrue) {
         qWarning() << "PluginEditor: attached() failed:" << result;
         m_plugView->release();
         m_plugView = nullptr;
-        delete m_container;
+        setPluginInputPriority(false);
+        setFocusProxy(nullptr);
+        delete m_scrollArea;
+        m_scrollArea = nullptr;
         m_container = nullptr;
+        m_nativeWidth = 0;
+        m_nativeHeight = 0;
+        m_scaleFactor = 1.0;
+        m_supportsResize = false;
         return false;
     }
 
     qDebug() << "PluginEditor: Attached successfully (native:" << m_nativeWidth << "x" << m_nativeHeight << ")";
 
+#ifdef Q_OS_MAC
+    // Cocoa 側の responder chain に乗りやすくするため、アタッチ直後にホストへフォーカスを寄せる。
+    m_container->setFocus(Qt::OtherFocusReason);
+    m_plugView->onFocus(true);
+    syncMacNativeClipState(m_scrollArea, m_container);
+
+    // スクロール・レイアウト更新後にも clip を再同期し、native view のはみ出しを抑える。
+    connect(m_scrollArea->horizontalScrollBar(), &QScrollBar::valueChanged, this,
+            [this](int) { syncMacNativeClipState(m_scrollArea, m_container); });
+    connect(m_scrollArea->verticalScrollBar(), &QScrollBar::valueChanged, this,
+            [this](int) { syncMacNativeClipState(m_scrollArea, m_container); });
+    QTimer::singleShot(0, this, [this]() {
+        syncMacNativeClipState(m_scrollArea, m_container);
+    });
+#endif
+
     // 初回スケール計算
     updateScaleMode();
+    scheduleDeferredViewSync();
     return true;
 #else
-    qWarning() << "PluginEditor: Windows以外は未対応";
+    qWarning() << "PluginEditor: このOSは未対応";
     m_plugView->release();
     m_plugView = nullptr;
     return false;
@@ -602,6 +854,7 @@ void PluginEditorWidget::enterBitmapCaptureMode()
     // 定期キャプチャ開始（約30fps）
     m_captureTimer.start(33);
     m_bitmapCaptureActive = true;
+    setPluginInputPriority(true);
 
     // 初回キャプチャ
     QTimer::singleShot(100, this, &PluginEditorWidget::capturePluginView);
@@ -665,12 +918,51 @@ void PluginEditorWidget::capturePluginView()
 void PluginEditorWidget::closeEditor()
 {
     m_captureTimer.stop();
+    setPluginInputPriority(false);
+    setFocusProxy(nullptr);
+    releaseMouse();
+    clearFocus();
+
+    if (m_scaledDisplay) {
+        m_scaledDisplay->releaseMouse();
+        m_scaledDisplay->hide();
+    }
+    if (m_container) {
+        m_container->releaseMouse();
+        m_container->clearFocus();
+        m_container->hide();
+    }
+    if (m_scrollArea) {
+        if (QWidget* viewport = m_scrollArea->viewport()) {
+            viewport->releaseMouse();
+            viewport->clearFocus();
+        }
+        m_scrollArea->releaseMouse();
+        m_scrollArea->clearFocus();
+        m_scrollArea->hide();
+    }
 
     if (m_plugView) {
+#ifdef Q_OS_MAC
+        m_plugView->onFocus(false);
+#endif
         m_plugView->removed();
+#ifdef Q_OS_MAC
+        if (m_container) {
+            // detach 後に残留した native subview が splitter 操作へ触らないようにする。
+            Darwin::clearMacHostedSubviews(m_container);
+        }
+#endif
         m_plugView->release();
         m_plugView = nullptr;
     }
+#ifdef Q_OS_MAC
+    if (m_container) {
+        // エディタを閉じた後に親NSViewへ残る状態を戻し、ウィンドウ操作へ副作用を残さない。
+        Darwin::clearMacHostedSubviews(m_container);
+        Darwin::clearMacClipWidget(m_container);
+    }
+#endif
     m_plugFrame = nullptr;
 
     // PlugFrameの解放
@@ -679,21 +971,23 @@ void PluginEditorWidget::closeEditor()
         s_currentPlugFrame = nullptr;
     }
 
-    // オフスクリーンホストを削除（m_containerが子なら一緒に削除される）
-    if (m_offscreenHost) {
-        m_container = nullptr; // オフスクリーンホストの子として自動削除
-        delete m_offscreenHost;
-        m_offscreenHost = nullptr;
+    // setWidget() 所有のまま scroll area を消すと片付け順を制御しづらいので、
+    // 先にコンテナを切り離してから順番に破棄する。
+    if (m_scrollArea && m_container && m_scrollArea->widget() == m_container) {
+        m_scrollArea->takeWidget();
     }
 
-    // スクロールエリアを削除（m_containerを内包している場合は一緒に削除される）
+    if (m_offscreenHost) {
+        delete m_offscreenHost;
+        m_offscreenHost = nullptr;
+        m_container = nullptr;
+    }
+
     if (m_scrollArea) {
-        m_container = nullptr; // スクロールエリアがsetWidget()で所有権を持つ
         delete m_scrollArea;
         m_scrollArea = nullptr;
     }
 
-    // ダイレクトモード時のコンテナ削除（スクロールエリア未使用の場合のフォールバック）
     if (m_container) {
         delete m_container;
         m_container = nullptr;
@@ -714,6 +1008,7 @@ void PluginEditorWidget::closeEditor()
     m_scaleFactor = 1.0;
     m_supportsResize = false;
     m_bitmapCaptureActive = false;
+    m_deferredViewSyncPending = false;
 
     setMinimumSize(0, 0);
     setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);

@@ -90,7 +90,7 @@ const QColor ACCENT_COLOR = QColor("#FF3366");
 src/
 ├── main.cpp
 ├── MainWindow.cpp / .h
-├── audio/              # オーディオエンジン (WASAPI), エクスポート
+├── audio/              # オーディオエンジン (Windows: WASAPI / macOS: AudioUnit), エクスポート
 ├── commands/           # Undo/Redo コマンド群
 ├── common/             # 共通定数, ユーティリティ (MidiFileParser, ChordDetector 等)
 ├── controllers/        # PlaybackController 等

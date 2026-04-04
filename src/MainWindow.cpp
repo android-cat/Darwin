@@ -38,6 +38,7 @@
 #include <QStandardPaths>
 #include <QFileInfo>
 #include "common/FadeHelper.h"
+#include "common/FontManager.h"
 #include "AudioExporter.h"
 #include "ProjectLoadDialog.h"
 #include "common/ThemeManager.h"
@@ -402,6 +403,8 @@ void MainWindow::applyGlobalStyle()
     QString inputBgStr = isDark ? "#1e1e1e" : "#ffffff";
     QString menuBgStr = isDark ? "#1e293b" : "#ffffff";
     QString menuSelectedStr = isDark ? "#334155" : "#f1f5f9";
+    const QString uiFontCss = Darwin::FontManager::uiFontCss();
+    const QString monoFontCss = Darwin::FontManager::monoFontCss();
 
     QString css = QString(
         "QMainWindow, QDialog { background-color: %1; }"
@@ -409,19 +412,19 @@ void MainWindow::applyGlobalStyle()
         "QLabel { color: %2; }"
         // Header
         "#header { background-color: %1; border-bottom: 1px solid %4; }"
-        "#appTitle { font-family: 'Segoe UI', 'Helvetica Neue', sans-serif; font-weight: 300; font-size: 20px; letter-spacing: 2px; text-transform: uppercase; color: %2; }"
+        "#appTitle { font-family: %11; font-weight: 300; font-size: 20px; letter-spacing: 2px; text-transform: uppercase; color: %2; }"
         
         // Navigation Buttons
-        "QPushButton { border: none; background: none; font-family: 'Segoe UI', sans-serif; font-weight: 700; font-size: 11px; letter-spacing: 1px; color: %3; padding: 4px 12px; border-bottom: 2px solid transparent; text-transform: uppercase; }"
+        "QPushButton { border: none; background: none; font-family: %11; font-weight: 700; font-size: 11px; letter-spacing: 1px; color: %3; padding: 4px 12px; border-bottom: 2px solid transparent; text-transform: uppercase; }"
         "QPushButton:checked { color: #FF3366; border-bottom-color: #FF3366; }"
         "QPushButton:hover { color: %2; }"
         
         // Transport
         "#playBtn, #rewindBtn, #skipPrevBtn, #skipNextBtn { border: 1px solid %6; border-radius: 16px; color: %2; font-size: 14px; background-color: transparent; padding: 4px; }"
         "#playBtn:hover, #rewindBtn:hover, #skipPrevBtn:hover, #skipNextBtn:hover { border-color: %7; background-color: %5; color: #FF3366; }"
-        "#bpmSpinBox { font-family: 'Segoe UI', sans-serif; font-size: 11px; font-weight: 700; color: %2; border: 1px solid %6; border-radius: 4px; padding: 4px 8px; background-color: %8; }"
+        "#bpmSpinBox { font-family: %11; font-size: 11px; font-weight: 700; color: %2; border: 1px solid %6; border-radius: 4px; padding: 4px 8px; background-color: %8; }"
         "#bpmSpinBox:focus { border-color: #FF3366; }"
-        "#timecodeLabel { font-family: 'Roboto Mono', monospace; font-size: 11px; color: %3; }"
+        "#timecodeLabel { font-family: %12; font-size: 11px; color: %3; }"
         "#headerDivider { background-color: %4; border: none; }"
 
         // ScrollBars
@@ -433,12 +436,14 @@ void MainWindow::applyGlobalStyle()
         "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; }"
         
         // Menu / ToolButtons (ハンバーガーメニュー等)
-        "QMenu { background: %9; border: 1px solid %4; border-radius: 4px; padding: 4px 0px; font-family: 'Segoe UI', sans-serif; }"
+        "QMenu { background: %9; border: 1px solid %4; border-radius: 4px; padding: 4px 0px; font-family: %11; }"
         "QMenu::item { padding: 6px 32px 6px 24px; font-size: 12px; color: %2; }"
         "QMenu::item:selected { background: %10; color: #FF3366; }"
         "QMenu::separator { height: 1px; background: %4; margin: 4px 8px; }"
         "QToolButton { border: none; padding: 2px; border-radius: 4px; } QToolButton::menu-indicator { image: none; } QToolButton:hover { background-color: %10; }"
-    ).arg(bgStr, textStr, textSecStr, borderStr, btnHoverBgStr, btnBorderStr, btnBorderHoverStr, inputBgStr, menuBgStr, menuSelectedStr);
+    ).arg(bgStr, textStr, textSecStr, borderStr, btnHoverBgStr, btnBorderStr, btnBorderHoverStr, inputBgStr, menuBgStr, menuSelectedStr)
+     .arg(uiFontCss)
+     .arg(monoFontCss);
 
     qApp->setStyleSheet(css);
 
@@ -707,30 +712,38 @@ void MainWindow::setupMenuBar(QHBoxLayout* parentLayout)
     m_btnMenu->setPopupMode(QToolButton::InstantPopup);
 
     QMenu* mainMenu = new QMenu(m_btnMenu);
+    auto createMenuAction = [this, mainMenu](const QString& text,
+                                             const QKeySequence& shortcut) -> QAction* {
+        QAction* action = new QAction(text, this);
+        action->setShortcut(shortcut);
+        action->setShortcutContext(Qt::WindowShortcut);
+        action->setShortcutVisibleInContextMenu(true);
+        // ポップアップ表示用のメニューと、実際にショートカットを受けるメインウィンドウの両方へ登録する
+        addAction(action);
+        mainMenu->addAction(action);
+        return action;
+    };
 
     // ======== fileTool ========
-    m_newAction  = mainMenu->addAction("New Project");
-    m_newAction->setShortcut(QKeySequence::New);
+    m_newAction  = createMenuAction("New Project", QKeySequence::New);
     connect(m_newAction, &QAction::triggered, this, &MainWindow::newProject);
 
-    m_openAction = mainMenu->addAction("Open...");
-    m_openAction->setShortcut(QKeySequence::Open);
+    m_openAction = createMenuAction("Open...", QKeySequence::Open);
     connect(m_openAction, &QAction::triggered, this, &MainWindow::openProject);
 
     mainMenu->addSeparator();
 
-    m_saveAction = mainMenu->addAction("Save");
-    m_saveAction->setShortcut(QKeySequence::Save);
+    m_saveAction = createMenuAction("Save", QKeySequence::Save);
     connect(m_saveAction, &QAction::triggered, this, &MainWindow::saveProject);
 
-    QAction* saveAsAction = mainMenu->addAction("Save As...");
-    saveAsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+    QAction* saveAsAction = createMenuAction("Save As...",
+                                             QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
     connect(saveAsAction, &QAction::triggered, this, &MainWindow::saveProjectAs);
 
     mainMenu->addSeparator();
 
-    m_exportAction = mainMenu->addAction("Export Audio...");
-    m_exportAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
+    m_exportAction = createMenuAction("Export Audio...",
+                                      QKeySequence(Qt::CTRL | Qt::Key_E));
     connect(m_exportAction, &QAction::triggered, this, &MainWindow::exportAudio);
 
     mainMenu->addSeparator();
@@ -738,10 +751,16 @@ void MainWindow::setupMenuBar(QHBoxLayout* parentLayout)
     // ======== editTool ========
     QAction* undoAction = m_undoStack->createUndoAction(this, "Undo");
     undoAction->setShortcut(QKeySequence::Undo);
+    undoAction->setShortcutContext(Qt::WindowShortcut);
+    undoAction->setShortcutVisibleInContextMenu(true);
+    addAction(undoAction);
     mainMenu->addAction(undoAction);
 
     QAction* redoAction = m_undoStack->createRedoAction(this, "Redo");
     redoAction->setShortcut(QKeySequence::Redo);
+    redoAction->setShortcutContext(Qt::WindowShortcut);
+    redoAction->setShortcutVisibleInContextMenu(true);
+    addAction(redoAction);
     mainMenu->addAction(redoAction);
 
     m_btnMenu->setMenu(mainMenu);

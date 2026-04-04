@@ -1,6 +1,7 @@
 # ビルドディレクトリ・CMake生成ファイル
 build/
 build_*/
+build-tests/
 CMakeCache.txt
 CMakeFiles/
 CMakeScripts/

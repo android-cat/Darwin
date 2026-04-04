@@ -7,6 +7,7 @@
 #include <QLineEdit>
 #include <QLabel>
 #include <QFontMetrics>
+#include "common/FontManager.h"
 
 CustomTooltip* CustomTooltip::instance() {
     static CustomTooltip* s_inst = nullptr;
@@ -27,18 +28,18 @@ CustomTooltip::CustomTooltip()
     : QLabel(nullptr, Qt::ToolTip | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint)
 {
     setAttribute(Qt::WA_TranslucentBackground);
-    setStyleSheet(R"(
+    setStyleSheet(QString(R"(
         QLabel {
             background-color: #1e293b;
             color: #e2e8f0;
             border: 1px solid #334155;
             border-radius: 4px;
             padding: 5px 10px;
-            font-family: 'Segoe UI', sans-serif;
+            font-family: %1;
             font-size: 11px;
             font-weight: 600;
         }
-    )");;
+    )").arg(Darwin::FontManager::uiFontCss()));
 
     auto* eff = new QGraphicsOpacityEffect(this);
     setGraphicsEffect(eff);

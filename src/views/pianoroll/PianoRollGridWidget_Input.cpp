@@ -537,6 +537,7 @@ void PianoRollGridWidget::keyPressEvent(QKeyEvent *event)
             minStart = qMin(minStart, st);
         }
 
+        QList<Note*> pastedNotes;
         Note* lastPasted = nullptr;
         for (const QJsonValue& val : notesArray) {
             QJsonObject noteJson = val.toObject();
@@ -551,13 +552,20 @@ void PianoRollGridWidget::keyPressEvent(QKeyEvent *event)
                 duration = qMin(duration, maxDur);
                 lastPasted = m_activeClip->addNote(pitch, startTick, duration, velocity);
                 if (lastPasted) {
+                    // 貼り付け直後にまとめて移動しやすいよう、生成したノートを記録しておく。
+                    pastedNotes.append(lastPasted);
                     startNoteAnim(lastPasted, NoteAnim::PopIn);
                 }
             }
         }
 
-        if (lastPasted) {
+        if (!pastedNotes.isEmpty()) {
+            m_selectedNotes = pastedNotes;
             m_selectedNote = lastPasted;
+            if (m_selectedNote != m_prevSelectedNote) {
+                startNoteAnim(m_selectedNote, NoteAnim::SelectGlow);
+            }
+            m_prevSelectedNote = m_selectedNote;
         }
         update();
     }

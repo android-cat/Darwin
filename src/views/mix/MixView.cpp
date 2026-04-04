@@ -12,6 +12,7 @@
 #include <QSplitter>
 #include "../plugineditor/PluginEditorWidget.h"
 #include "../../plugins/VST3PluginInstance.h"
+#include "common/FontManager.h"
 #include "common/ThemeManager.h"
 
 // レイアウト定数
@@ -206,10 +207,8 @@ void MixView::buildMixerChannels()
     connect(master, &MixerChannelWidget::pluginEditorRequested,
             this, &MixView::onPluginEditorRequested);
 
-    if (masterTrack) {
-        connect(masterTrack, &Track::propertyChanged,
-                master, &MixerChannelWidget::updateFxSlots);
-    }
+    // 注: propertyChanged → updateFxSlots は MixerChannelWidget コンストラクタで
+    //     既に接続済み。ここで再接続すると二重呼び出しになるため省略。
 
     connectPlaybackMetering(master);
     m_mixerLayout->addWidget(master);
@@ -293,10 +292,12 @@ void MixView::buildFolderGroup(Track* folder, QHBoxLayout* parentLayout, int& tr
             color: white;
             border-radius: %2px;
             border: none;
-            font-family: 'Segoe UI', sans-serif;
+            font-family: %3;
             font-size: 9px;
             font-weight: 700;
-        )").arg(folder->color().name()).arg(FOLDER_BADGE_RADIUS));
+        )").arg(folder->color().name())
+            .arg(FOLDER_BADGE_RADIUS)
+            .arg(Darwin::FontManager::uiFontCss()));
         folderLayout->addWidget(countLabel, 0, Qt::AlignVCenter);
     }
 

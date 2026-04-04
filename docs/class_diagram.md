@@ -239,7 +239,7 @@ classDiagram
         +static QVector~float~ generateWaveformPreview(QVector~float~ L, QVector~float~ R, int width)$
         +static bool isSupportedAudioFile(QString filePath)$
         -static AudioFileData readWav(QString filePath)$
-        -static AudioFileData readWithMF(QString filePath)$
+        -static AudioFileData readCompressedAudio(QString filePath)$
     }
 
     class AudioFileData {

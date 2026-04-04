@@ -14,6 +14,7 @@
 #include "models/Track.h"
 #include "common/Constants.h"
 #include "common/FadeHelper.h"
+#include "common/FontManager.h"
 #include "common/ThemeManager.h"
 #include <QPainter>
 #include <QHBoxLayout>
@@ -31,6 +32,37 @@
 #include <QPropertyAnimation>
 #include <QGraphicsOpacityEffect>
 #include <QTimer>
+
+namespace {
+
+int cornerActionButtonFontSize()
+{
+#ifdef Q_OS_MAC
+    return 9;
+#else
+    return 11;
+#endif
+}
+
+int cornerActionButtonHorizontalPadding()
+{
+#ifdef Q_OS_MAC
+    return 6;
+#else
+    return 8;
+#endif
+}
+
+int cornerActionButtonVerticalPadding()
+{
+#ifdef Q_OS_MAC
+    return 3;
+#else
+    return 4;
+#endif
+}
+
+}
 
 // selectTrack()でスタイル更新に使用するstatic関数
 static void applyTrackHeaderStyle(QWidget* header, Track* t, Track* selectedTrack, Project* project)
@@ -67,7 +99,7 @@ static void applyTrackHeaderStyle(QWidget* header, Track* t, Track* selectedTrac
     // QLineEdit の色も更新（フォルダ=12px、通常トラック=11px）
     const int leFontSize = isFolder ? 12 : 11;
     const QString leStyle = QString(
-        "QLineEdit { font-family: 'Segoe UI', sans-serif; font-size: %5px; font-weight: 700;"
+        "QLineEdit { font-family: %5; font-size: %6px; font-weight: 700;"
         " color: %1; background: transparent; border: 1px solid transparent;"
         " border-radius: 2px; padding: 2px; }"
         "QLineEdit:hover { border: 1px solid %2; }"
@@ -76,6 +108,7 @@ static void applyTrackHeaderStyle(QWidget* header, Track* t, Track* selectedTrac
         .arg(tm.borderColor().name())
         .arg(tm.panelBackgroundColor().name())
         .arg(isDark ? "#94a3b8" : "#3b82f6")
+        .arg(Darwin::FontManager::uiFontCss())
         .arg(leFontSize);
     for (QLineEdit* le : header->findChildren<QLineEdit*>()) {
         le->setStyleSheet(leStyle);
@@ -131,16 +164,22 @@ ArrangementView::ArrangementView(QWidget *parent)
     
     auto makeCornerBtnStyle = [](const Darwin::ThemeManager& t) {
         bool d = t.isDarkMode();
+        const int fontSize = cornerActionButtonFontSize();
+        const int paddingH = cornerActionButtonHorizontalPadding();
+        const int paddingV = cornerActionButtonVerticalPadding();
         return QString(
             "QPushButton { background-color: %1; color: %2; border: 1px solid %3;"
-            " border-radius: 4px; font-weight: 600; font-size: 11px; padding: 4px 8px; }"
+            " border-radius: 4px; font-weight: 600; font-size: %6px; padding: %7px %8px; }"
             "QPushButton:hover { background-color: %4; color: %5; }"
             "QPushButton:pressed { background-color: %3; }")
             .arg(d ? "#2d3748" : "#f1f5f9",
                  d ? "#94a3b8" : "#64748b",
                  d ? "#334155" : "#cbd5e1",
                  d ? "#3d4f69" : "#e2e8f0",
-                 d ? "#e2e8f0" : "#1e293b");
+                 d ? "#e2e8f0" : "#1e293b")
+            .arg(fontSize)
+            .arg(paddingV)
+            .arg(paddingH);
     };
     const QString cornerBtnStyle = makeCornerBtnStyle(Darwin::ThemeManager::instance());
 
@@ -254,16 +293,22 @@ ArrangementView::ArrangementView(QWidget *parent)
 
         // +Track / +Folder ボタン
         const bool d = tm2.isDarkMode();
+        const int fontSize = cornerActionButtonFontSize();
+        const int paddingH = cornerActionButtonHorizontalPadding();
+        const int paddingV = cornerActionButtonVerticalPadding();
         const QString btnStyle = QString(
             "QPushButton { background-color: %1; color: %2; border: 1px solid %3;"
-            " border-radius: 4px; font-weight: 600; font-size: 11px; padding: 4px 8px; }"
+            " border-radius: 4px; font-weight: 600; font-size: %6px; padding: %7px %8px; }"
             "QPushButton:hover { background-color: %4; color: %5; }"
             "QPushButton:pressed { background-color: %3; }")
             .arg(d ? "#2d3748" : "#f1f5f9",
                  d ? "#94a3b8" : "#64748b",
                  d ? "#334155" : "#cbd5e1",
                  d ? "#3d4f69" : "#e2e8f0",
-                 d ? "#e2e8f0" : "#1e293b");
+                 d ? "#e2e8f0" : "#1e293b")
+            .arg(fontSize)
+            .arg(paddingV)
+            .arg(paddingH);
         if (m_addTrackBtn)  m_addTrackBtn->setStyleSheet(btnStyle);
         if (m_addFolderBtn) m_addFolderBtn->setStyleSheet(btnStyle);
 

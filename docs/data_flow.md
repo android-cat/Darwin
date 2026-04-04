@@ -17,10 +17,10 @@ sequenceDiagram
     MainWindow->>PlaybackController: togglePlayPause()
     PlaybackController->>PlaybackController: 全トラックのprepareAudio()
     PlaybackController->>AudioEngine: start()
-    AudioEngine->>AudioEngine: WASAPIストリーム開始
-    AudioEngine->>AudioEngine: レンダリングスレッド起動
+    AudioEngine->>AudioEngine: オーディオストリーム開始
+    AudioEngine->>AudioEngine: プラットフォーム別コールバック起動
 
-    loop WASAPIイベント駆動（~10ms毎）
+    loop オーディオコールバック駆動（~10ms前後）
         AudioEngine->>PlaybackController: audioRenderCallback(buffer, frames)
         PlaybackController->>PlaybackController: クリップ種別を判定
         alt オーディオクリップ
@@ -33,7 +33,7 @@ sequenceDiagram
         end
         PlaybackController->>PlaybackController: トラックをミックス（vol/pan適用）
         PlaybackController-->>AudioEngine: バッファ充填完了
-        AudioEngine->>AudioEngine: WASAPIに出力
+        AudioEngine->>AudioEngine: OSネイティブ出力へ反映
     end
 
     loop 16ms毎（UI更新タイマー）
@@ -78,7 +78,7 @@ sequenceDiagram
     SourceView->>PluginEditorWidget: openEditor(instance)
     PluginEditorWidget->>VST3PluginInstance: createView()
     VST3PluginInstance-->>PluginEditorWidget: IPlugView*
-    PluginEditorWidget->>PluginEditorWidget: HWND作成・アタッチ
+    PluginEditorWidget->>PluginEditorWidget: ネイティブビュー作成・アタッチ
     PluginEditorWidget->>PluginEditorWidget: スケールモード判定
 ```
 
@@ -126,7 +126,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A[WASAPI イベント発火] --> B[AudioEngine: 利用可能フレーム数取得]
+    A[オーディオコールバック発火] --> B[AudioEngine: 利用可能フレーム数取得]
     B --> C[PlaybackController: audioRenderCallback]
     C --> D[再生位置範囲を計算]
     D --> E{各トラックをループ}
@@ -136,7 +136,7 @@ flowchart TD
     H --> I[VST3PluginInstance::processAudio]
     I --> J[トラック出力をミックス<br>ボリューム・パン適用]
     J --> E
-    E --> K[インターリーブしてWASAPIバッファに書込]
+    E --> K[インターリーブして出力バッファに書込]
     K --> L[再生位置を更新<br>m_playPositionTicks]
 ```
 
@@ -296,7 +296,7 @@ sequenceDiagram
     alt WAVファイル
         AudioFileReader->>AudioFileReader: readWav() ネイティブPCM解析
     else MP3/M4A
-        AudioFileReader->>AudioFileReader: readWithMF() Media Foundationデコード
+        AudioFileReader->>AudioFileReader: readCompressedAudio() OSネイティブデコード
     end
     
     AudioFileReader->>AudioFileReader: generateWaveformPreview()
@@ -315,7 +315,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A[WASAPI イベント発火] --> B[AudioEngine: 利用可能フレーム数取得]
+    A[オーディオコールバック発火] --> B[AudioEngine: 利用可能フレーム数取得]
     B --> C[PlaybackController: audioRenderCallback]
     C --> D[再生位置範囲を計算]
     D --> E{各トラックをループ}
@@ -334,7 +334,7 @@ flowchart TD
     L --> M[ボリューム・パン適用]
     M --> N[フォルダバス or マスターバスへルーティング]
     N --> E
-    E --> O[インターリーブしてWASAPIバッファに書込]
+    E --> O[インターリーブして出力バッファに書込]
 ```
 
 ## 6. テーマ切り替えのデータフロー

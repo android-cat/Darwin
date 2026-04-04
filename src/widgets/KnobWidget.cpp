@@ -3,6 +3,7 @@
 #include <QMouseEvent>
 #include <QtMath>
 #include "common/Constants.h"
+#include "common/FontManager.h"
 #include "common/ThemeManager.h"
 
 KnobWidget::KnobWidget(const QString &label, QWidget *parent)
@@ -69,7 +70,7 @@ void KnobWidget::paintEvent(QPaintEvent *event)
     // Label (Top)
     const Darwin::ThemeManager& tm = Darwin::ThemeManager::instance();
     p.setPen(tm.secondaryTextColor());
-    p.setFont(QFont("Segoe UI", 7, QFont::Bold));
+    p.setFont(Darwin::FontManager::uiFont(7, QFont::Bold));
     QRect labelRect(0, 0, w, 12);
     p.drawText(labelRect, Qt::AlignHCenter | Qt::AlignVCenter, m_label);
 

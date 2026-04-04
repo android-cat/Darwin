@@ -1,5 +1,6 @@
 #include "ExportProgressDialog.h"
 #include "../common/ThemeManager.h"
+#include "../common/FontManager.h"
 #include <QPainter>
 #include <QPainterPath>
 #include <QPaintEvent>
@@ -81,12 +82,12 @@ void ExportProgressDialog::paintEvent(QPaintEvent* /*event*/)
     p.fillRect(headerRect, QColor("#221f1f")); // 画像の暗いヘッダー色
 
     p.setPen(Qt::white);
-    p.setFont(QFont("Segoe UI", 11, QFont::Medium));
+    p.setFont(Darwin::FontManager::uiFont(11, QFont::Medium));
     p.drawText(headerRect.adjusted(15, 0, 0, 0), Qt::AlignVCenter | Qt::AlignLeft, "エクスポート中...");
 
     // ─── メインテキスト ───
     p.setPen(isDark ? tm.textColor() : QColor("#334155"));
-    p.setFont(QFont("Segoe UI", 12));
+    p.setFont(Darwin::FontManager::uiFont(12));
     QRect textRect(20, headerHeight + 20, width() - 40, 30);
     p.drawText(textRect, Qt::AlignCenter, m_infoText);
 
@@ -101,7 +102,7 @@ void ExportProgressDialog::paintEvent(QPaintEvent* /*event*/)
 
     // 進行状況パーセント（画像は下の方に薄いブルーグレー）
     p.setPen(isDark ? tm.secondaryTextColor() : QColor("#94a3b8"));
-    p.setFont(QFont("Segoe UI Light", 14));
+    p.setFont(Darwin::FontManager::uiFont(14, QFont::Light));
     QRect percentRect(20, height() - 50, width() - 40, 40);
     p.drawText(percentRect, Qt::AlignCenter, QString("%1 %").arg(static_cast<int>(m_progress * 100)));
 
@@ -222,4 +223,3 @@ void ExportProgressDialog::drawPen(QPainter& p, const QPointF& tipPos) const
 
     p.restore();
 }
-

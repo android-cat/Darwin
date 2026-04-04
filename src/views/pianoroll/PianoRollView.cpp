@@ -6,6 +6,7 @@
 #include <QLabel>
 #include <QScrollArea>
 #include <QScrollBar>
+#include "common/FontManager.h"
 #include "common/ThemeManager.h"
 
 PianoRollView::PianoRollView(QWidget *parent) 
@@ -20,6 +21,7 @@ PianoRollView::PianoRollView(QWidget *parent)
     QHBoxLayout *mainLayout = new QHBoxLayout(this);
     mainLayout->setContentsMargins(0,0,0,0);
     mainLayout->setSpacing(0);
+    const QString monoFontCss = Darwin::FontManager::monoFontCss();
 
     // Left Side: Keys Area
     m_keysScrollArea = new QScrollArea(this);
@@ -63,13 +65,13 @@ PianoRollView::PianoRollView(QWidget *parent)
             if (isSharp) {
                 const QString sharpBg   = isDark ? tm2.pianoBlackKeyColor().name() : "#e2e8f0";
                 const QString sharpText = isDark ? "#94a3b8" : "#333333";
-                key->setStyleSheet(QString("background-color: %1; border-bottom: 1px solid %2; font-family: 'Roboto Mono'; font-size: 10px; color: %3; font-weight: 500;")
-                    .arg(sharpBg, keyBorder, sharpText));
+                key->setStyleSheet(QString("background-color: %1; border-bottom: 1px solid %2; font-family: %4; font-size: 10px; color: %3; font-weight: 500;")
+                    .arg(sharpBg, keyBorder, sharpText, monoFontCss));
             } else {
                 const QString whiteBg   = isDark ? tm2.panelBackgroundColor().name() : "#f8fafc";
                 const QString whiteText = isDark ? "#475569" : "#333333";
-                key->setStyleSheet(QString("background-color: %1; border-bottom: 1px solid %2; font-family: 'Roboto Mono'; font-size: 10px; color: %3; font-weight: 500;")
-                    .arg(whiteBg, keyBorder, whiteText));
+                key->setStyleSheet(QString("background-color: %1; border-bottom: 1px solid %2; font-family: %4; font-size: 10px; color: %3; font-weight: 500;")
+                    .arg(whiteBg, keyBorder, whiteText, monoFontCss));
             }
         }
         
@@ -179,17 +181,18 @@ void PianoRollView::applyTheme()
     const QString blackBg  = isDark ? tm.pianoBlackKeyColor().name() : "#e2e8f0";
     const QString whiteBg  = isDark ? tm.panelBackgroundColor().name() : "#f8fafc";
     const QString borderCol = isDark ? tm.borderColor().name() : "#f1f5f9";
+    const QString monoFontCss = Darwin::FontManager::monoFontCss();
     // 黒鍵・白鍵ともテキストは背景に合わせて固定色
     const QString blackTextCol = isDark ? "#94a3b8" : "#333333";
     const QString whiteTextCol = isDark ? "#475569" : "#333333";
     const QString sharpStyle = QString(
         "background-color: %1; border-bottom: 1px solid %2;"
-        " font-family: 'Roboto Mono'; font-size: 10px; color: %3; font-weight: 500;")
-        .arg(blackBg, borderCol, blackTextCol);
+        " font-family: %4; font-size: 10px; color: %3; font-weight: 500;")
+        .arg(blackBg, borderCol, blackTextCol, monoFontCss);
     const QString whiteStyle = QString(
         "background-color: %1; border-bottom: 1px solid %2;"
-        " font-family: 'Roboto Mono'; font-size: 10px; color: %3; font-weight: 500;")
-        .arg(whiteBg, borderCol, whiteTextCol);
+        " font-family: %4; font-size: 10px; color: %3; font-weight: 500;")
+        .arg(whiteBg, borderCol, whiteTextCol, monoFontCss);
 
     for (QLabel* key : m_keysWidget->findChildren<QLabel*>()) {
         bool isSharp = key->text().contains('#');

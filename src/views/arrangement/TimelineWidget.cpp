@@ -5,6 +5,7 @@
 #include "models/Note.h"
 #include "common/Constants.h"
 #include "common/ChordDetector.h"
+#include "common/FontManager.h"
 #include "common/ThemeManager.h"
 
 void TimelineWidget::setProject(Project* project)
@@ -164,7 +165,7 @@ void TimelineWidget::paintEvent(QPaintEvent* event)
 
         if (!m_cachedChordSpans.isEmpty()) {
             p.setRenderHint(QPainter::Antialiasing, true);
-            QFont chordFont("Segoe UI", 8);
+            QFont chordFont = Darwin::FontManager::uiFont(8);
             chordFont.setBold(true);
             p.setFont(chordFont);
             QFontMetrics cfm(chordFont);

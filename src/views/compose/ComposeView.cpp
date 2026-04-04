@@ -19,6 +19,10 @@
 #include <QFutureWatcher>
 #include "common/ThemeManager.h"
 
+namespace {
+constexpr int kMainSplitterGrabWidth = 6;
+}
+
 ComposeView::ComposeView(QWidget *parent)
     : QWidget(parent)
     , m_arrangementView(nullptr)
@@ -104,8 +108,12 @@ void ComposeView::setupUi()
     layout->setContentsMargins(0, 0, 0, 0);
 
     m_mainSplitter = new QSplitter(Qt::Horizontal, this);
-    m_mainSplitter->setHandleWidth(1);
-    m_mainSplitter->setStyleSheet("QSplitter::handle { background-color: #334155; }");
+    // 見た目は出さず、掴める幅だけ広げて範囲選択に負けにくくする。
+    m_mainSplitter->setHandleWidth(kMainSplitterGrabWidth);
+    // ページ切り替え後も右ペインが極端に潰れてドラッグしづらくならないようにする。
+    m_mainSplitter->setChildrenCollapsible(false);
+    m_mainSplitter->setStyleSheet(
+        "QSplitter::handle:horizontal { background-color: transparent; border: none; }");
 
     m_vSplitter = new QSplitter(Qt::Vertical, m_mainSplitter);
     m_vSplitter->setHandleWidth(1);
@@ -127,12 +135,14 @@ void ComposeView::setupUi()
 
     // ========== 右パネル（3ページ構成） ==========
     m_editorStack = new QStackedWidget(m_mainSplitter);
+    m_editorStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    m_editorStack->setMinimumWidth(0);
 
     // ----- ページ0: トラック未選択 -----
     m_noPluginPanel = new QWidget(m_editorStack);
-    m_noPluginPanel->setStyleSheet(QString("background-color: %1; border-left: 1px solid %2;").arg(
-        Darwin::ThemeManager::instance().panelBackgroundColor().name(),
-        Darwin::ThemeManager::instance().borderColor().name()));
+    m_noPluginPanel->setMinimumWidth(0);
+    m_noPluginPanel->setStyleSheet(QString("background-color: %1;").arg(
+        Darwin::ThemeManager::instance().panelBackgroundColor().name()));
     QVBoxLayout *noPluginLayout = new QVBoxLayout(m_noPluginPanel);
     m_noPluginLabel = new QLabel("Select a track to start", m_noPluginPanel);
     m_noPluginLabel->setAlignment(Qt::AlignCenter);
@@ -141,9 +151,9 @@ void ComposeView::setupUi()
 
     // ----- ページ1: プラグイン選択パネル -----
     m_pluginSelectorPanel = new QWidget(m_editorStack);
-    m_pluginSelectorPanel->setStyleSheet(QString("background-color: %1; border-left: 1px solid %2;").arg(
-        Darwin::ThemeManager::instance().panelBackgroundColor().name(),
-        Darwin::ThemeManager::instance().borderColor().name()));
+    m_pluginSelectorPanel->setMinimumWidth(0);
+    m_pluginSelectorPanel->setStyleSheet(QString("background-color: %1;").arg(
+        Darwin::ThemeManager::instance().panelBackgroundColor().name()));
     QVBoxLayout *selectorLayout = new QVBoxLayout(m_pluginSelectorPanel);
     selectorLayout->setContentsMargins(16, 16, 16, 16);
     selectorLayout->setSpacing(12);
@@ -218,6 +228,7 @@ void ComposeView::setupUi()
 
     // ----- ページ2: エディタコンテナ（ヘッダーバー + PluginEditorWidget）-----
     m_editorContainer = new QWidget(m_editorStack);
+    m_editorContainer->setMinimumWidth(0);
     m_editorContainer->setStyleSheet("background-color: #1a1a2e;");
     QVBoxLayout *editorContainerLayout = new QVBoxLayout(m_editorContainer);
     editorContainerLayout->setContentsMargins(0, 0, 0, 0);
@@ -228,7 +239,6 @@ void ComposeView::setupUi()
     m_editorHeaderBar->setFixedHeight(40);
     m_editorHeaderBar->setStyleSheet(
         "background-color: #252526;"
-        "border-left: 1px solid #334155;"
         "border-bottom: 1px solid #2a2a3a;");
     QHBoxLayout *editorHeaderLayout = new QHBoxLayout(m_editorHeaderBar);
     editorHeaderLayout->setContentsMargins(16, 0, 12, 0);
@@ -303,15 +313,17 @@ void ComposeView::applyTheme()
     const bool    isDark   = tm.isDarkMode();
 
     // スプリッターハンドル
-    const QString splitterStyle =
-        QString("QSplitter::handle { background-color: %1; }").arg(border);
-    if (m_mainSplitter) m_mainSplitter->setStyleSheet(splitterStyle);
-    if (m_vSplitter)    m_vSplitter->setStyleSheet(splitterStyle);
+    const QString mainSplitterStyle =
+        "QSplitter::handle:horizontal { background-color: transparent; border: none; }";
+    const QString verticalSplitterStyle =
+        QString("QSplitter::handle:vertical { background-color: %1; }").arg(border);
+    if (m_mainSplitter) m_mainSplitter->setStyleSheet(mainSplitterStyle);
+    if (m_vSplitter)    m_vSplitter->setStyleSheet(verticalSplitterStyle);
 
     // ページ0: トラック未選択パネル
     if (m_noPluginPanel)
         m_noPluginPanel->setStyleSheet(
-            QString("background-color: %1; border-left: 1px solid %2;").arg(panelBg, border));
+            QString("background-color: %1;").arg(panelBg));
     if (m_noPluginLabel)
         m_noPluginLabel->setStyleSheet(
             QString("color: %1; font-size: 14px;").arg(textSec));
@@ -319,7 +331,7 @@ void ComposeView::applyTheme()
     // ページ1: プラグイン選択パネル
     if (m_pluginSelectorPanel)
         m_pluginSelectorPanel->setStyleSheet(
-            QString("background-color: %1; border-left: 1px solid %2;").arg(panelBg, border));
+            QString("background-color: %1;").arg(panelBg));
     if (m_selectorTrackLabel)
         m_selectorTrackLabel->setStyleSheet(
             QString("font-size: 13px; font-weight: 600; color: %1;").arg(text));
@@ -362,7 +374,7 @@ void ComposeView::applyTheme()
     // ページ2: エディタヘッダーバー
     if (m_editorHeaderBar)
         m_editorHeaderBar->setStyleSheet(
-            QString("background-color: %1; border-left: 1px solid %2; border-bottom: 1px solid %2;")
+            QString("background-color: %1; border-bottom: 1px solid %2;")
             .arg(panelBg, border));
     if (m_editorTrackLabel)
         m_editorTrackLabel->setStyleSheet(

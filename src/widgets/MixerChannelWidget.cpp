@@ -20,7 +20,9 @@
 #include <QFileInfo>
 #include <QGraphicsOpacityEffect>
 #include <QPropertyAnimation>
+#include <memory>
 #include <QTimer>
+#include <QFontMetrics>
 #include <QDrag>
 #include <QMimeData>
 #include <QUrl>
@@ -29,7 +31,9 @@
 #include <QFutureWatcher>
 #include "../plugins/VST3Scanner.h"
 #include "../plugins/VST3PluginInstance.h"
+#include "common/FontManager.h"
 #include "common/ThemeManager.h"
+#include <QDebug>
 
 namespace {
     static QVector<VST3PluginInfo> s_cachedPlugins;
@@ -72,7 +76,8 @@ MixerChannelWidget::MixerChannelWidget(int trackNumber, const QString &trackName
     // Fader Section (Top)
     QFrame* faderSection = new QFrame(this);
     faderSection->setObjectName("faderSection");
-    faderSection->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    faderSection->setMinimumHeight(140);
+    faderSection->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::MinimumExpanding);
 
     if (isFolder) {
         // 背景色(パネル背景)とトラックカラーを混合し、透明な薄い色を表現する
@@ -135,7 +140,8 @@ MixerChannelWidget::MixerChannelWidget(int trackNumber, const QString &trackName
     m_levelMeterR = new LevelMeterWidget(faderSection);
     faderLayout->addWidget(m_levelMeterR);
 
-    layout->addWidget(faderSection);
+    // 縦方向の可変領域はフェーダー部だけに寄せ、下の固定UIを押し潰さない。
+    layout->addWidget(faderSection, 1);
 
     // Value Label for Fader（dB表示）
     auto makeDbText = [](float pos) -> QString {
@@ -148,8 +154,9 @@ MixerChannelWidget::MixerChannelWidget(int trackNumber, const QString &trackName
     QLabel* volLabel = new QLabel(makeDbText(fader->value()), this);
     volLabel->setObjectName("volLabel");
     volLabel->setAlignment(Qt::AlignCenter);
-    volLabel->setStyleSheet(QString("font-family: 'Segoe UI', sans-serif; font-size: 9px; color: %1;")
-        .arg(Darwin::ThemeManager::instance().secondaryTextColor().name()));
+    volLabel->setStyleSheet(QString("font-family: %2; font-size: 9px; color: %1;")
+        .arg(Darwin::ThemeManager::instance().secondaryTextColor().name(),
+             Darwin::FontManager::uiFontCss()));
     layout->addWidget(volLabel);
 
     connect(fader, &FaderWidget::valueChanged, [volLabel, makeDbText](float val) {
@@ -159,8 +166,12 @@ MixerChannelWidget::MixerChannelWidget(int trackNumber, const QString &trackName
     // FX Slots Container
     m_fxContainer = new QWidget(this);
     m_fxLayout = new QVBoxLayout(m_fxContainer);
-    m_fxLayout->setContentsMargins(0,0,0,0);
-    m_fxLayout->setSpacing(4);
+    m_fxLayout->setContentsMargins(0, 0, 0, 0);
+    // spacing を 0 にして、ボタン間の隙間は固定高さのスペーサーアイテムで管理する。
+    // layout spacing に頼ると activate() のタイミングで Qt が余白を再分配する場合があるため。
+    m_fxLayout->setSpacing(0);
+    m_fxLayout->setSizeConstraint(QLayout::SetNoConstraint);
+    m_fxContainer->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 
     if (m_track) {
         connect(m_track, &Track::propertyChanged, this, &MixerChannelWidget::updateFxSlots);
@@ -298,12 +309,13 @@ MixerChannelWidget::MixerChannelWidget(int trackNumber, const QString &trackName
         nameLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
         CustomTooltip::attach(nameLabel);
         nameLabel->setStyleSheet(QString(
-            "font-family: 'Segoe UI', sans-serif;"
+            "font-family: %2;"
             "font-size: 10px;"
             "font-weight: 800;"
             "color: %1;"
             "letter-spacing: 0.5px;"
-        ).arg(m_track->color().darker(140).name()));
+        ).arg(m_track->color().darker(140).name(),
+              Darwin::FontManager::uiFontCss()));
         chevronRowLayout->addWidget(nameLabel, 1);
 
         folderNameLayout->addWidget(chevronRow);
@@ -316,13 +328,14 @@ MixerChannelWidget::MixerChannelWidget(int trackNumber, const QString &trackName
         nameLabel->setAlignment(Qt::AlignCenter);
         CustomTooltip::attach(nameLabel);
         nameLabel->setStyleSheet(QString(
-            "font-family: 'Segoe UI', sans-serif;"
+            "font-family: %2;"
             "font-size: 10px;"
             "font-weight: 800;"
             "color: %1;"
             "letter-spacing: 0.5px;"
             "margin-top: 4px;"
-        ).arg(Darwin::ThemeManager::instance().textColor().name()));
+        ).arg(Darwin::ThemeManager::instance().textColor().name(),
+              Darwin::FontManager::uiFontCss()));
         
         layout->addWidget(nameLabel);
     }
@@ -383,10 +396,11 @@ void MixerChannelWidget::applyTheme()
     // テキストラベルのテーマ更新
     const QString secColor = Darwin::ThemeManager::instance().secondaryTextColor().name();
     const QString textColor = Darwin::ThemeManager::instance().textColor().name();
+    const QString uiFontCss = Darwin::FontManager::uiFontCss();
     if (QLabel* lbl = findChild<QLabel*>("trackNameLabel"))
-        lbl->setStyleSheet(QString("font-family: 'Segoe UI', sans-serif; font-size: 10px; font-weight: 800; color: %1; letter-spacing: 0.5px; margin-top: 4px;").arg(textColor));
+        lbl->setStyleSheet(QString("font-family: %2; font-size: 10px; font-weight: 800; color: %1; letter-spacing: 0.5px; margin-top: 4px;").arg(textColor, uiFontCss));
     if (QLabel* lbl = findChild<QLabel*>("volLabel"))
-        lbl->setStyleSheet(QString("font-family: 'Segoe UI', sans-serif; font-size: 9px; color: %1;").arg(secColor));
+        lbl->setStyleSheet(QString("font-family: %2; font-size: 9px; color: %1;").arg(secColor, uiFontCss));
     if (QLabel* lbl = findChild<QLabel*>("timingValueLabel"))
         lbl->setStyleSheet(QString("font-size: 8px; color: %1;").arg(secColor));
     if (QLabel* lbl = findChild<QLabel*>("panValueLabel"))
@@ -407,13 +421,18 @@ void MixerChannelWidget::setLevel(float left, float right)
 
 void MixerChannelWidget::updateFxSlots()
 {
-    // Clear all existing widgets in fxLayout
-    QLayoutItem *child;
-    while ((child = m_fxLayout->takeAt(0)) != nullptr) {
-        if (child->widget()) {
-            child->widget()->deleteLater();
-        }
-        delete child;
+    const QFont fxButtonFont = Darwin::FontManager::uiFont(10, QFont::Bold);
+    const QFontMetrics fxButtonMetrics(fxButtonFont);
+    // macOS のシステムフォントは descender が深めなので、固定 22px だと下側が潰れやすい。
+    const int fxButtonHeight = qMax(24, fxButtonMetrics.height() + 10);
+    const int addFxButtonHeight = qMax(22, fxButtonMetrics.height() + 6);
+    constexpr int kFxSpacing = 4; // ボタン間の固定スペース
+
+    // 既存の子ボタンを全て削除（手動配置なのでレイアウトではなく children を操作）
+    const auto oldButtons = m_fxContainer->findChildren<QPushButton*>(QString(), Qt::FindDirectChildrenOnly);
+    for (QPushButton* b : oldButtons) {
+        b->hide();
+        b->deleteLater();
     }
     
     // Create buttons for each loaded FX
@@ -422,7 +441,8 @@ void MixerChannelWidget::updateFxSlots()
         for (int i = 0; i < fxPlugins.size(); ++i) {
             VST3PluginInstance* fx = fxPlugins.at(i);
             QPushButton *btn = new QPushButton(fx->pluginName(), m_fxContainer);
-            btn->setFixedHeight(22);
+            btn->setFont(fxButtonFont);
+            btn->setFixedHeight(fxButtonHeight);
             btn->setCursor(Qt::PointingHandCursor);
             
             if (fx->isBypassed()) {
@@ -435,9 +455,7 @@ void MixerChannelWidget::updateFxSlots()
                     "  color: %2;" 
                     "  border: 1px solid %3;"
                     "  border-radius: 2px;"
-                    "  font-family: 'Segoe UI', sans-serif;"
-                    "  font-size: 10px;"
-                    "  font-weight: 700;"
+                    "  padding: 1px 4px 2px 4px;"
                     "}"
                     "QPushButton:hover { background-color: %3; }"
                     "QPushButton:pressed { background-color: %3; color: %2; }"
@@ -454,9 +472,7 @@ void MixerChannelWidget::updateFxSlots()
                     "  color: %2;" 
                     "  border: 1px solid %3;"
                     "  border-radius: 2px;"
-                    "  font-family: 'Segoe UI', sans-serif;"
-                    "  font-size: 10px;"
-                    "  font-weight: 700;"
+                    "  padding: 1px 4px 2px 4px;"
                     "}"
                     "QPushButton:hover { background-color: %3; }"
                     "QPushButton:pressed { background-color: %3; color: %2; }"
@@ -464,12 +480,25 @@ void MixerChannelWidget::updateFxSlots()
                 ).arg(bg, fg, border));
             }
             
-            m_fxLayout->addWidget(btn);
-            
+            // 手動 setGeometry() でボタン位置を確定する。
+            // Qt layout エンジンを経由しないため activate() による再分配は起きない。
+            const int btnY = i * (fxButtonHeight + kFxSpacing);
+            const int btnW = qMax(1, m_fxContainer->width());
+            btn->setGeometry(0, btnY, btnW, fxButtonHeight);
+            btn->show();
+
+            // 新規追加ボタン: 最初から opacity=0 にしておくことで、
+            // animateFxAppear が呼ばれるまで非表示状態を維持する（hide() 不要＝点滅なし）。
+            if (i == m_pendingFxHighlight) {
+                auto* pendingEff = new QGraphicsOpacityEffect(btn);
+                pendingEff->setOpacity(0.0);
+                btn->setGraphicsEffect(pendingEff);
+            }
+
             // Event filter for double-click removal and long-press bypass
             btn->setProperty("fxIndex", i);
             btn->installEventFilter(this);
-            
+
             // Clicks request editor to open in Inspector
             connect(btn, &QPushButton::clicked, this, [this, fx, btn]() {
                 if (btn->property("longPressTriggered").toBool()) {
@@ -480,33 +509,53 @@ void MixerChannelWidget::updateFxSlots()
             });
         }
     }
-    
-    // Re-add the "+" button
+
+    // "+" ボタン
+    const int fxCount = m_track ? m_track->fxPlugins().size() : 0;
+    const int addY = fxCount * (fxButtonHeight + kFxSpacing);
     QPushButton *addFxBtn = new QPushButton("+", m_fxContainer);
-    addFxBtn->setFixedHeight(20);
+    addFxBtn->setFont(fxButtonFont);
     addFxBtn->setCursor(Qt::PointingHandCursor);
     QString addBg = Darwin::ThemeManager::instance().isDarkMode() ? "#1e293b" : "#f8fafc";
     QString addHover = Darwin::ThemeManager::instance().isDarkMode() ? "#334155" : "#f1f5f9";
     QString addBorder = Darwin::ThemeManager::instance().isDarkMode() ? "#475569" : "#cbd5e1";
     QString addFg = Darwin::ThemeManager::instance().isDarkMode() ? "#94a3b8" : "#94a3b8";
-
     addFxBtn->setStyleSheet(QString(
         "QPushButton {"
-        "  border: 1px dashed %3;" 
+        "  border: 1px dashed %3;"
         "  border-radius: 2px;"
-        "  color: %4;" 
-        "  font-weight: bold;"
+        "  color: %4;"
         "  background-color: %1;"
+        "  padding: 0px 4px 1px 4px;"
         "}"
         "QPushButton:hover { background-color: %2; color: #64748b; }"
     ).arg(addBg, addHover, addBorder, addFg));
     connect(addFxBtn, &QPushButton::clicked, this, &MixerChannelWidget::showFxPluginMenu);
-    m_fxLayout->addWidget(addFxBtn);
-    
-    // 追加アニメーション: 新しく追加されたFXスロットを浮かび上がらせる
+    const int btnW = qMax(1, m_fxContainer->width());
+    addFxBtn->setGeometry(0, addY, btnW, addFxButtonHeight);
+    addFxBtn->show();
+
+    // コンテナ高さを確定する（外側の VBoxLayout にサイズを伝えるため）
+    const int totalFxHeight = fxCount * (fxButtonHeight + kFxSpacing) + addFxButtonHeight;
+    m_fxContainer->setFixedHeight(totalFxHeight);
+    // 外側レイアウトに高さ変化を通知する。
+    // ここで activate() するのは外側 (MixerChannelWidget) の VBoxLayout であり、
+    // m_fxContainer の内部には layout がないため spacing 再分配は起きない。
+    if (layout()) layout()->activate();
+
+    // 追加アニメーション
+    // QTimer::singleShot(0) でイベントキューに積み、現在の propertyChanged シグナル処理
+    // （PlaybackController::prepareAudio 等のブロッキング処理）が全て完了した後の
+    // 次のイベントループサイクルでアニメーションを開始する。
+    // 直接呼ぶと prepareAudio がメインスレッドをブロックする間にアニメーションが
+    // 消費されてしまい、フェードインが視覚的に見えなくなるため。
     if (m_pendingFxHighlight >= 0) {
-        animateFxAppear(m_pendingFxHighlight);
+        const int indexToAnimate = m_pendingFxHighlight;
         m_pendingFxHighlight = -1;
+        qDebug() << "[updateFxSlots] scheduling animateFxAppear for fxIndex=" << indexToAnimate;
+        QTimer::singleShot(0, this, [this, indexToAnimate]() {
+            animateFxAppear(indexToAnimate);
+        });
     }
 }
 
@@ -561,7 +610,7 @@ void MixerChannelWidget::showFxPluginMenu()
             }
             QLabel {
                 color: %3;
-                font-family: 'Segoe UI', sans-serif;
+                font-family: %7;
                 font-size: 12px;
                 font-weight: 600;
                 letter-spacing: 0.5px;
@@ -580,7 +629,7 @@ void MixerChannelWidget::showFxPluginMenu()
                 background-color: %6;
                 border-radius: 3px;
             }
-        )").arg(dlgBg, dlgBorder, dlgText, isDark ? "#0f172a" : "#f1f5f9", dlgSec, Darwin::ThemeManager::instance().accentColor().name()));
+        )").arg(dlgBg, dlgBorder, dlgText, isDark ? "#0f172a" : "#f1f5f9", dlgSec, Darwin::ThemeManager::instance().accentColor().name(), Darwin::FontManager::uiFontCss()));
         progress->setValue(1); // Force show
         progress->show();
 
@@ -697,6 +746,15 @@ void MixerChannelWidget::showFxPluginMenuAfterScan(
 
 bool MixerChannelWidget::eventFilter(QObject *watched, QEvent *event)
 {
+    // m_fxContainer がリサイズされたらボタン幅を追従させる
+    if (watched == m_fxContainer && event->type() == QEvent::Resize) {
+        const int w = m_fxContainer->width();
+        for (QPushButton* b : m_fxContainer->findChildren<QPushButton*>(QString(), Qt::FindDirectChildrenOnly)) {
+            if (b->width() != w) b->resize(w, b->height());
+        }
+        return false;
+    }
+
     QPushButton* btn = qobject_cast<QPushButton*>(watched);
     if (!btn) return QWidget::eventFilter(watched, event);
 
@@ -1041,44 +1099,87 @@ void MixerChannelWidget::animateFxBurst(QPushButton* btn)
     });
 }
 
-// ── Glow / float-up animation on FX add ──────────────────────
-void MixerChannelWidget::animateFxAppear(int fxIndex)
+// ── Fade-in animation on FX add ──────────────────────────────
+void MixerChannelWidget::animateFxAppear(int fxIndex, int retryCount)
 {
-    if (!m_fxLayout) return;
+    // prepareAudio はUIタイマー(50ms)から非同期で呼ばれる。
+    // 完了前にアニメーションを開始するとメインスレッドのブロック中に全フレームが消費されてしまう。
+    // isAudioPrepared() がtrueになるまで30ms間隔でリトライ（最大40回 = 1.2秒）。
+    if (m_track) {
+        const auto& fxList = m_track->fxPlugins();
+        if (fxIndex < fxList.size()) {
+            VST3PluginInstance* fx = fxList.value(fxIndex);
+            if (fx && !fx->isAudioPrepared() && retryCount < 40) {
+                if (retryCount == 0)
+                    qDebug() << "[animateFxAppear] fxIndex=" << fxIndex << " waiting for prepareAudio...";
+                QTimer::singleShot(30, this, [this, fxIndex, retryCount]() {
+                    animateFxAppear(fxIndex, retryCount + 1);
+                });
+                return;
+            }
+            qDebug() << "[animateFxAppear] fxIndex=" << fxIndex
+                     << " retryCount=" << retryCount
+                     << " isAudioPrepared=" << (fx ? fx->isAudioPrepared() : false);
+        } else {
+            qDebug() << "[animateFxAppear] fxIndex=" << fxIndex << " out of range, fxList.size()=" << fxList.size();
+        }
+    }
 
-    // fxLayout items: [fx0, fx1, ..., fxN, "+"-button]
-    // The new FX button is at index fxIndex
-    if (fxIndex < 0 || fxIndex >= m_fxLayout->count()) return;
-    QLayoutItem* item = m_fxLayout->itemAt(fxIndex);
-    if (!item || !item->widget()) return;
+    // 手動配置に変更したため m_fxLayout は使わず、fxIndex プロパティで検索する
+    QPushButton* btn = nullptr;
+    for (QPushButton* b : m_fxContainer->findChildren<QPushButton*>(QString(), Qt::FindDirectChildrenOnly)) {
+        bool ok;
+        if (b->property("fxIndex").toInt(&ok) == fxIndex && ok) {
+            btn = b;
+            break;
+        }
+    }
+    if (!btn) { qDebug() << "[animateFxAppear] btn NOT FOUND for fxIndex=" << fxIndex; return; }
 
-    QPushButton* btn = qobject_cast<QPushButton*>(item->widget());
-    if (!btn) return;
+    // prepareAudio 完了後に burst 発火した複数のリトライが全て通過するのを防ぐ。
+    // 同一ボタンへの 2 回目以降の呼び出しは無視する。
+    if (btn->property("animScheduled").toBool()) {
+        qDebug() << "[animateFxAppear] already scheduled, skip";
+        return;
+    }
+    btn->setProperty("animScheduled", true);
+    btn->raise();
 
-    // Start translucent + slightly below, animate to full opacity at correct position
-    auto* eff = new QGraphicsOpacityEffect(btn);
-    eff->setOpacity(0.0);
-    btn->setGraphicsEffect(eff);
+    qDebug() << "[animateFxAppear] btn=" << btn->text() << " scheduling 300ms post-prepare delay";
 
-    // じんわりフェードイン
-    auto* fadeIn = new QPropertyAnimation(eff, "opacity", btn);
-    fadeIn->setDuration(500);
-    fadeIn->setStartValue(0.0);
-    fadeIn->setEndValue(1.0);
-    fadeIn->setEasingCurve(QEasingCurve::InOutQuad);
-    fadeIn->start(QAbstractAnimation::DeleteWhenStopped);
+    // prepareAudio 直後はプラグインの post-load 処理（restartComponent 等）が続くため、
+    // 300ms 待機してからアニメーションを開始する。
+    QTimer::singleShot(300, btn, [btn]() {
+        qDebug() << "[animateFxAppear] starting frame-based animation";
+        auto* eff = qobject_cast<QGraphicsOpacityEffect*>(btn->graphicsEffect());
+        if (!eff) {
+            eff = new QGraphicsOpacityEffect(btn);
+            btn->setGraphicsEffect(eff);
+        }
+        eff->setOpacity(0.0);
 
-    // Glow highlight: temporarily set a bright border/background
-    QString origStyle = btn->styleSheet();
-    btn->setStyleSheet(origStyle + " border: 1px solid rgba(100,200,255,220); background-color: rgba(80,160,255,60);");
-
-    // Fade glow away after animation settles
-    QTimer::singleShot(500, btn, [btn, origStyle]() {
-        if (!btn) return;
-        // Animate glow fadeout by restoring style
-        btn->setStyleSheet(origStyle + " border: 1px solid rgba(100,200,255,100); background-color: rgba(80,160,255,30);");
-        QTimer::singleShot(300, btn, [btn, origStyle]() {
-            if (btn) btn->setStyleSheet(origStyle);
+        // ── フレームベースアニメーション ────────────────────────────────────
+        // QPropertyAnimation は「経過実時間ベース」のため、メインスレッドが
+        // ブロックされてタイマーが溜まると一気に進んで爆速に見える。
+        // QTimer + 固定ステップ方式なら、溜まったタイマーが burst 発火しても
+        // 各発火は 1 フレーム分しか進まないためジャンプしない。
+        constexpr int kFrames = 50;  // 50 × 16ms ≈ 800ms
+        auto frame = std::make_shared<int>(0);
+        auto* timer = new QTimer(btn);
+        timer->setInterval(16);
+        connect(timer, &QTimer::timeout, btn, [eff, frame, timer, btn]() {
+            if (++(*frame) >= kFrames) {
+                eff->setOpacity(1.0);
+                btn->setGraphicsEffect(nullptr);
+                timer->stop();
+                timer->deleteLater();
+                return;
+            }
+            const double t = (double)(*frame) / kFrames;
+            const double s = 1.0 - t;
+            eff->setOpacity(1.0 - s * s * s);  // OutCubic
         });
+        timer->start();
+        qDebug() << "[animateFxAppear] frame timer started (50 frames x 16ms)";
     });
 }

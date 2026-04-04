@@ -4,6 +4,7 @@
 #include <QApplication>
 #include <cmath>
 #include "common/Constants.h"
+#include "common/FontManager.h"
 #include "common/ThemeManager.h"
 
 static float easeOutCubic(float t) { return 1.0f - std::pow(1.0f - t, 3.0f); }
@@ -121,9 +122,9 @@ void ProjectLoadDialog::paintEvent(QPaintEvent*)
     p.drawPath(accentBar);
     p.restore();
 
-    QFont titleFont("Segoe UI", 11, QFont::Bold);
-    QFont subFont("Segoe UI", 9);
-    QFont smallFont("Segoe UI", 8);
+    QFont titleFont = Darwin::FontManager::uiFont(11, QFont::Bold);
+    QFont subFont = Darwin::FontManager::uiFont(9);
+    QFont smallFont = Darwin::FontManager::uiFont(8);
 
     // ── Loading ──
     if (m_stage == Loading) {

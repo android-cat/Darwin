@@ -92,10 +92,20 @@ public slots:
 protected:
     /** ウィジェットのリサイズに応じてスケーリングを自動更新 */
     void resizeEvent(QResizeEvent* event) override;
+    /** 親UIへのイベント伝播を必要に応じて打ち止めにする */
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    /** 監視対象のレイアウト変化がサイズ同期を促すべきか判定する */
+    bool shouldScheduleViewSync(QObject* watched, QEvent* event) const;
     /** 現在のウィジェットサイズに応じてスケールモードを更新 */
     void updateScaleMode();
+    /** レイアウト確定後にプラグインビューのサイズ同期をやり直す */
+    void scheduleDeferredViewSync();
+    /** プラグインビュー優先の入力設定を適用/解除する */
+    void setPluginInputPriority(bool active);
+    /** 親UIへ渡したくない入力イベントか判定する */
+    bool shouldConsumePriorityEvent(QObject* watched, QEvent* event) const;
     /** ダイレクトモードに切り替え（プラグインHWNDを直接表示） */
     void enterDirectMode();
     /** ビットマップキャプチャモードに切り替え */
@@ -120,4 +130,5 @@ private:
     int m_nativeHeight;                    ///< プラグインの元高さ
     bool m_supportsResize;                 ///< canResize()対応プラグインか
     bool m_bitmapCaptureActive;            ///< ビットマップキャプチャモードか
+    bool m_deferredViewSyncPending;        ///< 遅延同期が予約済みか
 };

@@ -14,17 +14,19 @@
 #include <QLineEdit>
 #include <QColorDialog>
 #include "common/Constants.h"
+#include "common/FontManager.h"
 #include "common/ThemeManager.h"
 // 名前編集フィールドのスタイルをテーマに合わせて生成
 static QString makeNameEditStyle(const Darwin::ThemeManager& tm, int fontSize = 11)
 {
     return QString(
-        "QLineEdit { font-family: 'Segoe UI', sans-serif; font-size: %1px; font-weight: 700;"
-        " color: %2; background: transparent; border: 1px solid transparent;"
+        "QLineEdit { font-family: %1; font-size: %2px; font-weight: 700;"
+        " color: %3; background: transparent; border: 1px solid transparent;"
         " border-radius: 2px; padding: 2px; }"
-        "QLineEdit:hover { border: 1px solid %3; }"
-        "QLineEdit:focus { background: %4; border: 1px solid %5; }"
-    ).arg(fontSize)
+        "QLineEdit:hover { border: 1px solid %4; }"
+        "QLineEdit:focus { background: %5; border: 1px solid %6; }"
+    ).arg(Darwin::FontManager::uiFontCss())
+     .arg(fontSize)
      .arg(tm.textColor().name())
      .arg(tm.borderColor().name())
      .arg(tm.panelBackgroundColor().name())

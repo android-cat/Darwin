@@ -1,9 +1,10 @@
 #include "MainWindow.h"
+#include "plugins/VST3MetadataProbe.h"
 #include "widgets/SplashWidget.h"
 #include <QApplication>
-#include <QFontDatabase>
 #include <QStandardPaths>
 #include <QDir>
+#include "common/FontManager.h"
 #include "common/ThemeManager.h"
 
 #ifdef Q_OS_WIN
@@ -17,6 +18,13 @@ extern "C" { __declspec(dllexport) unsigned long AmdPowerXpressRequestHighPerfor
 
 int main(int argc, char *argv[])
 {
+#ifdef Q_OS_MAC
+    QString probeModulePath;
+    if (Darwin::tryParseVST3MetadataProbeArgs(argc, argv, probeModulePath)) {
+        return Darwin::runVST3MetadataProbe(probeModulePath);
+    }
+#endif
+
 #ifdef Q_OS_WIN
     // Early COM initialization (Apartment Threaded) required by some VST3 plugins / UI frameworks
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -26,6 +34,8 @@ int main(int argc, char *argv[])
 #endif
 
     QApplication app(argc, argv);
+    // macOS のポップアップメニューでもショートカット表記を明示表示する
+    app.styleHints()->setShowShortcutsInContextMenus(true);
     Darwin::ThemeManager::instance().initialize();
 
     // Projectフォルダが存在しなければ作成
@@ -38,12 +48,8 @@ int main(int argc, char *argv[])
         }
     }
 
-    // Set application-wide font (fallback to standard system fonts for now)
-    // In a real scenario, we might want to load fonts from resources if available.
-    // uidesign.html uses "Helvetica Neue", "Inter", "Arial"
-    QFont font("Arial"); 
-    font.setStyleHint(QFont::SansSerif);
-    app.setFont(font);
+    // 起動時にプラットフォーム別の既定フォントとエイリアスを適用する
+    Darwin::FontManager::configureApplicationFonts(app);
 
     MainWindow w;
     // w.show(); はSplashWidget終了後に呼ぶためここでは呼ばない
