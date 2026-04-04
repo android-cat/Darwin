@@ -6,6 +6,7 @@
 #include "Track.h"
 #include "Clip.h"
 #include "Note.h"
+#include "CCEvent.h"
 #include "VST3PluginInstance.h"
 #include "WavWriter.h"
 #include <QDateTime>
@@ -69,7 +70,7 @@ PlaybackController::PlaybackController(Project* project, QObject* parent)
         });
     m_midiInputDevice->setMessageCallback(
         [this](const MidiInputDevice::Message& message) {
-            handleMidiMessage(message.type, message.pitch, message.velocity);
+            handleMidiMessage(message);
         });
 
     connectProjectSignals(m_project);
@@ -451,14 +452,14 @@ void PlaybackController::appendRecordedAudio(const float* left, const float* rig
     std::memcpy(m_recordedAudioR.data() + oldSize, right, numFrames * sizeof(float));
 }
 
-void PlaybackController::handleMidiMessage(uint8_t type, int pitch, int velocity)
+void PlaybackController::handleMidiMessage(const MidiInputDevice::Message& msg)
 {
-    const int boundedPitch = qBound(0, pitch, 127);
-    const int boundedVelocity = qBound(0, velocity, 127);
+    const uint8_t type = msg.type;
+    const int boundedPitch = qBound(0, msg.pitch, 127);
+    const int boundedVelocity = qBound(0, msg.velocity, 127);
 
+    // 録音中のMIDIイベント処理（ノート＋CC/PitchBend/Aftertouch）
     if (m_isRecording.load() && m_recordingMode == RecordingMode::Midi) {
-        // MIDI入力は「録音データ化」と「ライブモニター」の二役を持つ。
-        // まずは録音用に相対tickへ変換してノート長を組み立てる。
         const qint64 absoluteTick =
             std::max<qint64>(m_recordStartTick,
                              static_cast<qint64>(m_playPositionTicks.load()));
@@ -467,12 +468,14 @@ void PlaybackController::handleMidiMessage(uint8_t type, int pitch, int velocity
         QMutexLocker locker(&m_recordMutex);
 
         if (type == 0) {
+            // NoteOn → アクティブノートに追加
             ActiveRecordedMidiNote active;
             active.pitch = boundedPitch;
             active.startTick = relativeTick;
             active.velocity = qMax(1, boundedVelocity);
             m_activeRecordedMidiNotes.push_back(active);
-        } else {
+        } else if (type == 1) {
+            // NoteOff → ノート確定
             for (int i = m_activeRecordedMidiNotes.size() - 1; i >= 0; --i) {
                 if (m_activeRecordedMidiNotes.at(i).pitch != boundedPitch) {
                     continue;
@@ -487,6 +490,27 @@ void PlaybackController::handleMidiMessage(uint8_t type, int pitch, int velocity
                 m_recordedMidiNotes.push_back(note);
                 break;
             }
+        } else if (type == 2) {
+            // CC → 録音データに追加
+            RecordedCCEvent ccEv;
+            ccEv.ccNumber = qBound(0, static_cast<int>(msg.ccNumber), 127);
+            ccEv.tick = relativeTick;
+            ccEv.value = qBound(0, static_cast<int>(msg.ccValue), 127);
+            m_recordedCCEvents.push_back(ccEv);
+        } else if (type == 3) {
+            // Pitch Bend → CC_PITCH_BEND として記録
+            RecordedCCEvent ccEv;
+            ccEv.ccNumber = CCEvent::CC_PITCH_BEND;
+            ccEv.tick = relativeTick;
+            ccEv.value = qBound(0, static_cast<int>(msg.bendValue), 16383);
+            m_recordedCCEvents.push_back(ccEv);
+        } else if (type == 4) {
+            // Channel Aftertouch → CC_CHANNEL_PRESSURE として記録
+            RecordedCCEvent ccEv;
+            ccEv.ccNumber = CCEvent::CC_CHANNEL_PRESSURE;
+            ccEv.tick = relativeTick;
+            ccEv.value = qBound(0, static_cast<int>(msg.pressure), 127);
+            m_recordedCCEvents.push_back(ccEv);
         }
     }
 
@@ -497,27 +521,54 @@ void PlaybackController::handleMidiMessage(uint8_t type, int pitch, int velocity
 
     // ライブモニター側は「選択中トラックへ今すぐ鳴らす」ことが目的なので、
     // オーディオスレッドが読める軽量なイベント列へ積むだけに留める。
-    bool shouldQueue = false;
-    if (type == 0) {
-        ++m_liveHeldNoteCounts[boundedPitch];
-        shouldQueue = true;
-    } else if (m_liveHeldNoteCounts[boundedPitch] > 0) {
-        --m_liveHeldNoteCounts[boundedPitch];
-        shouldQueue = true;
-    }
 
-    if (!shouldQueue) {
-        return;
-    }
+    if (type == 0 || type == 1) {
+        // NoteOn / NoteOff — 重複管理
+        bool shouldQueue = false;
+        if (type == 0) {
+            ++m_liveHeldNoteCounts[boundedPitch];
+            shouldQueue = true;
+        } else if (m_liveHeldNoteCounts[boundedPitch] > 0) {
+            --m_liveHeldNoteCounts[boundedPitch];
+            shouldQueue = true;
+        }
 
-    LiveMidiMessage liveMessage;
-    liveMessage.trackId = m_midiMonitorTrackId;
-    liveMessage.type = type == 0 ? 0 : 1;
-    liveMessage.pitch = static_cast<int16_t>(boundedPitch);
-    liveMessage.velocity = type == 0
-        ? static_cast<float>(boundedVelocity) / 127.0f
-        : 0.0f;
-    m_liveMidiMessages.push_back(liveMessage);
+        if (!shouldQueue) {
+            return;
+        }
+
+        LiveMidiMessage liveMessage;
+        liveMessage.trackId = m_midiMonitorTrackId;
+        liveMessage.type = type == 0 ? 0 : 1;
+        liveMessage.pitch = static_cast<int16_t>(boundedPitch);
+        liveMessage.velocity = type == 0
+            ? static_cast<float>(boundedVelocity) / 127.0f
+            : 0.0f;
+        m_liveMidiMessages.push_back(liveMessage);
+    } else if (type == 2) {
+        // CC
+        LiveMidiMessage liveMessage;
+        liveMessage.trackId = m_midiMonitorTrackId;
+        liveMessage.type = 2;
+        liveMessage.ccNumber = msg.ccNumber;
+        liveMessage.ccValue = msg.ccValue;
+        m_liveMidiMessages.push_back(liveMessage);
+    } else if (type == 3) {
+        // Pitch Bend
+        LiveMidiMessage liveMessage;
+        liveMessage.trackId = m_midiMonitorTrackId;
+        liveMessage.type = 3;
+        liveMessage.bendValue = msg.bendValue;
+        m_liveMidiMessages.push_back(liveMessage);
+    } else if (type == 4) {
+        // Channel Aftertouch → CC 129 (CC_CHANNEL_PRESSURE)
+        LiveMidiMessage liveMessage;
+        liveMessage.trackId = m_midiMonitorTrackId;
+        liveMessage.type = 2;
+        liveMessage.ccNumber = 129; // 内部的にChannel Aftertouch用のCC番号
+        liveMessage.ccValue = msg.pressure;
+        m_liveMidiMessages.push_back(liveMessage);
+    }
 }
 
 void PlaybackController::updateMidiInputState()
@@ -593,6 +644,7 @@ Clip* PlaybackController::finalizeMidiRecordingLocked(qint64 recordEndTick)
     }
 
     QVector<RecordedMidiNote> finishedNotes;
+    QVector<RecordedCCEvent> finishedCCEvents;
     {
         QMutexLocker locker(&m_recordMutex);
         finishedNotes = m_recordedMidiNotes;
@@ -607,6 +659,7 @@ Clip* PlaybackController::finalizeMidiRecordingLocked(qint64 recordEndTick)
         }
         m_recordedMidiNotes.clear();
         m_activeRecordedMidiNotes.clear();
+        finishedCCEvents = std::move(m_recordedCCEvents);
     }
 
     const qint64 durationTicks = std::max<qint64>(1, recordEndTick - m_recordStartTick);
@@ -614,6 +667,10 @@ Clip* PlaybackController::finalizeMidiRecordingLocked(qint64 recordEndTick)
     Clip* clip = m_recordTrack->addClip(m_recordStartTick, durationTicks);
     for (const RecordedMidiNote& note : std::as_const(finishedNotes)) {
         clip->addNote(note.pitch, note.startTick, note.durationTicks, note.velocity);
+    }
+    // 録音されたCC/PitchBend/Aftertouchイベントをクリップに追加
+    for (const RecordedCCEvent& ccEv : std::as_const(finishedCCEvents)) {
+        clip->addCCEvent(ccEv.ccNumber, ccEv.tick, ccEv.value);
     }
     return clip;
 }
@@ -941,6 +998,36 @@ void PlaybackController::audioRenderCallback(float* outputBuffer, int numFrames,
                     }
                 }
 
+                // 3) CCオートメーションイベントの収集
+                for (const Clip* clip : track->clips()) {
+                    if (clip->isAudioClip()) continue;
+
+                    double clipStart = static_cast<double>(clip->startTick());
+                    double clipEnd = static_cast<double>(clip->endTick());
+                    if (trackEndTick < clipStart || trackStartTick >= clipEnd) continue;
+
+                    for (const CCEvent* ccEv : clip->ccEvents()) {
+                        double evTick = clipStart + static_cast<double>(ccEv->tick());
+                        if (evTick >= trackStartTick && evTick < trackEndTick) {
+                            int sampleOffset = static_cast<int>((evTick - trackStartTick) / ticksPerSample);
+                            sampleOffset = std::clamp(sampleOffset, 0, numFrames - 1);
+
+                            VST3PluginInstance::MidiEvent ccMidi {};
+                            ccMidi.sampleOffset = sampleOffset;
+
+                            if (ccEv->ccNumber() == CCEvent::CC_PITCH_BEND) {
+                                ccMidi.type = 3; // Pitch Bend
+                                ccMidi.bendValue = static_cast<int16_t>(ccEv->value());
+                            } else {
+                                ccMidi.type = 2; // CC
+                                ccMidi.ccNumber = static_cast<uint8_t>(ccEv->ccNumber());
+                                ccMidi.ccValue = static_cast<uint8_t>(ccEv->value());
+                            }
+                            trackEvents.push_back(ccMidi);
+                        }
+                    }
+                }
+
             }
 
             for (const LiveMidiMessage& liveMessage : std::as_const(liveMidiMessages)) {
@@ -955,6 +1042,9 @@ void PlaybackController::audioRenderCallback(float* outputBuffer, int numFrames,
                 liveEvent.type = liveMessage.type;
                 liveEvent.pitch = liveMessage.pitch;
                 liveEvent.velocity = liveMessage.velocity;
+                liveEvent.ccNumber = liveMessage.ccNumber;
+                liveEvent.ccValue = liveMessage.ccValue;
+                liveEvent.bendValue = liveMessage.bendValue;
                 trackEvents.push_back(liveEvent);
             }
 

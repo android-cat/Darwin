@@ -28,6 +28,7 @@ sequenceDiagram
         end
         alt MIDIクリップ + プラグインあり
             PlaybackController->>PlaybackController: MIDIイベントを収集（クリップ/ノートから）
+            PlaybackController->>PlaybackController: CCオートメーションイベントを収集（CCEvent/PitchBendから）
             PlaybackController->>VST3PluginInstance: processAudio(outL, outR, frames, midiEvents)
             VST3PluginInstance-->>PlaybackController: オーディオデータ
         end
@@ -97,6 +98,36 @@ sequenceDiagram
     Clip->>Note: new Note(...)
     Clip-->>PianoRollGridWidget: noteAdded(note)
     PianoRollGridWidget->>PianoRollGridWidget: update()
+```
+
+## 3.5 CCオートメーション編集のデータフロー
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant PianoRollView
+    participant ExpressionLaneWidget
+    participant Clip
+    participant CCEvent
+
+    User->>PianoRollView: レーンチップ「Expr」クリック
+    PianoRollView->>PianoRollView: VelocityLane非表示、ExpressionLane表示
+    PianoRollView->>ExpressionLaneWidget: setCCNumber(11)
+
+    User->>ExpressionLaneWidget: クリック（空白部分）
+    ExpressionLaneWidget->>Clip: addCCEvent(11, tick, value)
+    Clip->>CCEvent: new CCEvent(11, tick, value)
+    Clip-->>ExpressionLaneWidget: changed()
+    ExpressionLaneWidget->>ExpressionLaneWidget: update()
+
+    User->>ExpressionLaneWidget: ポイントをドラッグ
+    ExpressionLaneWidget->>CCEvent: setTick(newTick), setValue(newValue)
+    CCEvent-->>Clip: changed()
+    Clip-->>ExpressionLaneWidget: changed()
+
+    User->>ExpressionLaneWidget: ポイントをダブルクリック
+    ExpressionLaneWidget->>Clip: removeCCEvent(event)
+    Clip-->>ExpressionLaneWidget: changed()
 ```
 
 ## 4. クリップ操作のデータフロー

@@ -10,6 +10,7 @@
 #include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "pluginterfaces/vst/ivstprocesscontext.h"
+#include "pluginterfaces/vst/ivstmidicontrollers.h"
 #include "pluginterfaces/vst/vsttypes.h"
 #include "pluginterfaces/gui/iplugview.h"
 #include "pluginterfaces/base/funknownimpl.h"
@@ -634,6 +635,37 @@ void VST3PluginInstance::processAudio(float* inputLeft, float* inputRight,
     s_outputEvents.clear();
 
     for (const auto& me : midiEvents) {
+        if (me.type == 2) {
+            // CC → VST3 Legacy MIDI CC Event
+            Event e {};
+            e.busIndex = 0;
+            e.sampleOffset = me.sampleOffset;
+            e.ppqPosition = 0;
+            e.flags = Event::kIsLive;
+            e.type = Event::kLegacyMIDICCOutEvent;
+            e.midiCCOut.channel = 0;
+            e.midiCCOut.controlNumber = me.ccNumber;
+            e.midiCCOut.value = me.ccValue;
+            e.midiCCOut.value2 = 0;
+            s_inputEvents.addEvent(e);
+            continue;
+        }
+        if (me.type == 3) {
+            // Pitch Bend → Legacy MIDI CC Event (Pitch Bend = kPitchBend)
+            Event e {};
+            e.busIndex = 0;
+            e.sampleOffset = me.sampleOffset;
+            e.ppqPosition = 0;
+            e.flags = Event::kIsLive;
+            e.type = Event::kLegacyMIDICCOutEvent;
+            e.midiCCOut.channel = 0;
+            e.midiCCOut.controlNumber = Vst::kPitchBend;
+            e.midiCCOut.value = me.bendValue & 0x7F;         // LSB
+            e.midiCCOut.value2 = (me.bendValue >> 7) & 0x7F; // MSB
+            s_inputEvents.addEvent(e);
+            continue;
+        }
+
         Event e {};
         e.busIndex = 0;
         e.sampleOffset = me.sampleOffset;

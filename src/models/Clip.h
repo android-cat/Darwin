@@ -8,6 +8,7 @@
 #include <QJsonArray>
 
 class Note;
+class CCEvent;
 
 /**
  * @brief クリップの種類
@@ -51,6 +52,14 @@ public:
     void insertNote(Note* note);     // 追加
     void clearNotes();
 
+    // CCイベント管理（エクスプレッション / モジュレーション / Pitch Bend 等）
+    const QList<CCEvent*>& ccEvents() const { return m_ccEvents; }
+    QList<CCEvent*> ccEventsForCC(int ccNumber) const;
+    CCEvent* addCCEvent(int ccNumber, qint64 tick, int value);
+    void removeCCEvent(CCEvent* event);
+    void clearCCEvents();
+    void clearCCEventsForCC(int ccNumber);
+
     // ===== オーディオクリップ関連 =====
 
     /** オーディオファイルを読み込んでオーディオクリップとして設定する */
@@ -84,6 +93,8 @@ signals:
     void changed();
     void noteAdded(Note* note);
     void noteRemoved(Note* note);
+    void ccEventAdded(CCEvent* event);
+    void ccEventRemoved(CCEvent* event);
 
 private:
     /** 波形プレビューを再生成する */
@@ -94,6 +105,7 @@ private:
     qint64 m_startTick;
     qint64 m_durationTicks;
     QList<Note*> m_notes;
+    QList<CCEvent*> m_ccEvents;  ///< CCオートメーションイベント
 
     // オーディオクリップ用データ
     ClipType m_clipType = ClipType::Midi;

@@ -5,6 +5,7 @@
 
 #include "Clip.h"
 #include "Note.h"
+#include "CCEvent.h"
 #include "Project.h"
 #include "Track.h"
 
@@ -232,6 +233,219 @@ private slots:
         QCOMPARE(track.clips().size(), 0);
         QVERIFY(clipRemovedSpy.count() >= 3);
         QVERIFY(propertySpy.count() >= 1);
+    }
+
+    void ccevent_behaviour_and_serialization()
+    {
+        // 基本的なCC作成・クランプ動作の確認
+        CCEvent ev(11, 480, 100);
+        QCOMPARE(ev.ccNumber(), 11);
+        QCOMPARE(ev.tick(), 480LL);
+        QCOMPARE(ev.value(), 100);
+
+        QSignalSpy changedSpy(&ev, &CCEvent::changed);
+
+        // 値のクランプ（0-127）
+        ev.setValue(200);
+        QCOMPARE(ev.value(), 127);
+        QCOMPARE(changedSpy.count(), 1);
+
+        ev.setValue(-10);
+        QCOMPARE(ev.value(), 0);
+        QCOMPARE(changedSpy.count(), 2);
+
+        // ティックのクランプ（0以上）
+        ev.setTick(-100);
+        QCOMPARE(ev.tick(), 0LL);
+        QCOMPARE(changedSpy.count(), 3);
+
+        // Pitch Bend（14bit: 0-16383）
+        CCEvent bendEv(CCEvent::CC_PITCH_BEND, 960, 8192);
+        QCOMPARE(bendEv.value(), 8192);
+
+        bendEv.setValue(20000);
+        QCOMPARE(bendEv.value(), 16383);
+
+        bendEv.setValue(-1);
+        QCOMPARE(bendEv.value(), 0);
+
+        // Channel Aftertouch (0-127)
+        CCEvent atEv(CCEvent::CC_CHANNEL_PRESSURE, 0, 64);
+        QCOMPARE(atEv.value(), 64);
+        atEv.setValue(200);
+        QCOMPARE(atEv.value(), 127);
+
+        // JSONシリアライズ → デシリアライズ
+        CCEvent original(1, 240, 80);
+        const QJsonObject json = original.toJson();
+        std::unique_ptr<CCEvent> restored(CCEvent::fromJson(json));
+        QVERIFY(restored);
+        QCOMPARE(restored->ccNumber(), 1);
+        QCOMPARE(restored->tick(), 240LL);
+        QCOMPARE(restored->value(), 80);
+
+        // Pitch Bendのシリアライズ
+        CCEvent bendOrig(CCEvent::CC_PITCH_BEND, 120, 12000);
+        const QJsonObject bendJson = bendOrig.toJson();
+        std::unique_ptr<CCEvent> bendRestored(CCEvent::fromJson(bendJson));
+        QVERIFY(bendRestored);
+        QCOMPARE(bendRestored->ccNumber(), CCEvent::CC_PITCH_BEND);
+        QCOMPARE(bendRestored->value(), 12000);
+
+        // デフォルト値でのデシリアライズ
+        std::unique_ptr<CCEvent> defaults(CCEvent::fromJson(QJsonObject()));
+        QVERIFY(defaults);
+        QCOMPARE(defaults->ccNumber(), 1);
+        QCOMPARE(defaults->tick(), 0LL);
+        QCOMPARE(defaults->value(), 0);
+    }
+
+    void clip_cc_events_lifecycle()
+    {
+        Clip clip(0, 1920);
+        QSignalSpy changedSpy(&clip, &Clip::changed);
+        QSignalSpy ccAddedSpy(&clip, &Clip::ccEventAdded);
+        QSignalSpy ccRemovedSpy(&clip, &Clip::ccEventRemoved);
+
+        // CCイベント追加
+        CCEvent* ev1 = clip.addCCEvent(11, 100, 64);
+        QVERIFY(ev1 != nullptr);
+        QCOMPARE(ev1->ccNumber(), 11);
+        QCOMPARE(ev1->tick(), 100LL);
+        QCOMPARE(ev1->value(), 64);
+        QCOMPARE(clip.ccEvents().size(), 1);
+        QCOMPARE(ccAddedSpy.count(), 1);
+
+        // 異なるCC番号のイベント追加
+        CCEvent* ev2 = clip.addCCEvent(1, 200, 100);
+        CCEvent* ev3 = clip.addCCEvent(11, 300, 80);
+        QCOMPARE(clip.ccEvents().size(), 3);
+
+        // CC番号でフィルタリング
+        QList<CCEvent*> cc11 = clip.ccEventsForCC(11);
+        QCOMPARE(cc11.size(), 2);
+        QList<CCEvent*> cc1 = clip.ccEventsForCC(1);
+        QCOMPARE(cc1.size(), 1);
+        QList<CCEvent*> ccNone = clip.ccEventsForCC(7);
+        QCOMPARE(ccNone.size(), 0);
+
+        // CCイベント削除
+        clip.removeCCEvent(ev2);
+        QCOMPARE(clip.ccEvents().size(), 2);
+        QCOMPARE(ccRemovedSpy.count(), 1);
+
+        // CC番号指定の一括削除
+        clip.clearCCEventsForCC(11);
+        QCOMPARE(clip.ccEvents().size(), 0);
+        flushDeferredDeletes();
+
+        // Pitch Bendイベント
+        CCEvent* bend = clip.addCCEvent(CCEvent::CC_PITCH_BEND, 480, 8192);
+        QCOMPARE(bend->value(), 8192);
+
+        // 全CCイベント削除
+        clip.addCCEvent(11, 0, 127);
+        clip.addCCEvent(1, 100, 50);
+        QCOMPARE(clip.ccEvents().size(), 3);
+        clip.clearCCEvents();
+        QCOMPARE(clip.ccEvents().size(), 0);
+
+        // CCイベント変更時のchangedシグナル伝播
+        int beforeCount = changedSpy.count();
+        CCEvent* ev4 = clip.addCCEvent(11, 0, 64);
+        ev4->setValue(100);
+        QVERIFY(changedSpy.count() > beforeCount + 1);
+    }
+
+    void clip_cc_events_json_roundtrip()
+    {
+        Clip clip(240, 960);
+        clip.addNote(60, 0, 480, 100);
+        clip.addCCEvent(11, 0, 64);
+        clip.addCCEvent(11, 240, 100);
+        clip.addCCEvent(1, 120, 80);
+        clip.addCCEvent(CCEvent::CC_PITCH_BEND, 480, 12000);
+
+        const QJsonObject json = clip.toJson();
+        std::unique_ptr<Clip> restored(Clip::fromJson(json));
+        QVERIFY(restored);
+        QVERIFY(restored->isMidiClip());
+        QCOMPARE(restored->notes().size(), 1);
+        QCOMPARE(restored->ccEvents().size(), 4);
+
+        // CC11が2つ、CC1が1つ、PitchBendが1つ
+        QCOMPARE(restored->ccEventsForCC(11).size(), 2);
+        QCOMPARE(restored->ccEventsForCC(1).size(), 1);
+        QCOMPARE(restored->ccEventsForCC(CCEvent::CC_PITCH_BEND).size(), 1);
+
+        // 値の精度確認
+        auto bendEvents = restored->ccEventsForCC(CCEvent::CC_PITCH_BEND);
+        QCOMPARE(bendEvents.first()->tick(), 480LL);
+        QCOMPARE(bendEvents.first()->value(), 12000);
+
+        // CCイベントなしの場合もJSONラウンドトリップ成功
+        Clip emptyClip(0, 480);
+        emptyClip.addNote(64, 0, 240, 90);
+        const QJsonObject emptyJson = emptyClip.toJson();
+        std::unique_ptr<Clip> emptyRestored(Clip::fromJson(emptyJson));
+        QVERIFY(emptyRestored);
+        QCOMPARE(emptyRestored->ccEvents().size(), 0);
+        QCOMPARE(emptyRestored->notes().size(), 1);
+    }
+
+    void clip_cc_recording_simulation()
+    {
+        // PlaybackController の録音パスを模擬:
+        // RecordedCCEvent と同じデータを集積し、Clip に一括書き込みする流れをテスト。
+
+        struct RecordedCCEvent {
+            int ccNumber;
+            qint64 tick;
+            int value;
+        };
+
+        // 録音データの蓄積をシミュレート
+        QVector<RecordedCCEvent> recordedEvents;
+        recordedEvents.push_back({11, 0, 64});      // Expression CC
+        recordedEvents.push_back({1, 240, 100});     // Modulation CC
+        recordedEvents.push_back({CCEvent::CC_PITCH_BEND, 480, 12000}); // Pitch Bend
+        recordedEvents.push_back({CCEvent::CC_CHANNEL_PRESSURE, 720, 80}); // Aftertouch
+
+        // finalizeMidiRecordingLocked 相当: クリップ生成 + Event 書き込み
+        Clip clip(0, 1920);
+        clip.addNote(60, 0, 480, 100); // ノートも同時に存在を想定
+        for (const auto& ev : std::as_const(recordedEvents)) {
+            clip.addCCEvent(ev.ccNumber, ev.tick, ev.value);
+        }
+
+        // 全イベントが記録されていること
+        QCOMPARE(clip.ccEvents().size(), 4);
+        QCOMPARE(clip.notes().size(), 1);
+
+        // CC番号ごとのフィルタリング
+        QCOMPARE(clip.ccEventsForCC(11).size(), 1);
+        QCOMPARE(clip.ccEventsForCC(1).size(), 1);
+        QCOMPARE(clip.ccEventsForCC(CCEvent::CC_PITCH_BEND).size(), 1);
+        QCOMPARE(clip.ccEventsForCC(CCEvent::CC_CHANNEL_PRESSURE).size(), 1);
+
+        // 値の整合性
+        auto bends = clip.ccEventsForCC(CCEvent::CC_PITCH_BEND);
+        QCOMPARE(bends.first()->tick(), 480LL);
+        QCOMPARE(bends.first()->value(), 12000);
+
+        auto ats = clip.ccEventsForCC(CCEvent::CC_CHANNEL_PRESSURE);
+        QCOMPARE(ats.first()->tick(), 720LL);
+        QCOMPARE(ats.first()->value(), 80);
+
+        // JSON ラウンドトリップ後もCC録音データが保持されること
+        const QJsonObject json = clip.toJson();
+        std::unique_ptr<Clip> restored(Clip::fromJson(json));
+        QVERIFY(restored);
+        QCOMPARE(restored->ccEvents().size(), 4);
+        QCOMPARE(restored->notes().size(), 1);
+        QCOMPARE(restored->ccEventsForCC(CCEvent::CC_PITCH_BEND).size(), 1);
+        QCOMPARE(restored->ccEventsForCC(CCEvent::CC_CHANNEL_PRESSURE).size(), 1);
+        QCOMPARE(restored->ccEventsForCC(CCEvent::CC_PITCH_BEND).first()->value(), 12000);
     }
 
     void project_folder_flags_ranges_and_file_roundtrip()

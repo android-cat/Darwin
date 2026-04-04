@@ -250,11 +250,25 @@ void MidiInputDevice::handleShortMessage(DWORD_PTR param1)
         message.pitch = data1;
         message.velocity = data2;
         recognized = true;
+    } else if (command == 0xB0) {
+        // Control Change
+        message.type = 2;
+        message.ccNumber = data1;
+        message.ccValue = data2;
+        recognized = true;
+    } else if (command == 0xE0) {
+        // Pitch Bend（14bit: data1=LSB, data2=MSB）
+        message.type = 3;
+        message.bendValue = static_cast<int16_t>(data1 | (data2 << 7));
+        recognized = true;
+    } else if (command == 0xD0) {
+        // Channel Aftertouch（1データバイト — data1が値）
+        message.type = 4;
+        message.pressure = data1;
+        recognized = true;
     }
 
     if (!recognized) {
-        // ライブモニター/録音で必要なのは現状 NoteOn/NoteOff のみ。
-        // CC などは今後必要になったらここで拡張する。
         return;
     }
 
@@ -322,6 +336,22 @@ void MidiInputDevice::handlePacketList(const MIDIPacketList* packetList)
                 message.type = 1;
                 message.pitch = data1;
                 message.velocity = data2;
+                recognized = true;
+            } else if (command == 0xB0) {
+                // Control Change
+                message.type = 2;
+                message.ccNumber = data1;
+                message.ccValue = data2;
+                recognized = true;
+            } else if (command == 0xE0) {
+                // Pitch Bend（14bit: data1=LSB, data2=MSB）
+                message.type = 3;
+                message.bendValue = static_cast<int16_t>(data1 | (data2 << 7));
+                recognized = true;
+            } else if (command == 0xD0) {
+                // Channel Aftertouch
+                message.type = 4;
+                message.pressure = data1;
                 recognized = true;
             }
 

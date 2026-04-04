@@ -81,13 +81,16 @@ public:
     bool prepareAudio(double sampleRate, int maxBlockSize);
 
     /**
-     * @brief MIDIイベント（NoteOn/NoteOff）
+     * @brief MIDIイベント（NoteOn/NoteOff/CC/PitchBend）
      */
     struct MidiEvent {
         int32_t sampleOffset; ///< バッファ内のサンプルオフセット
-        uint8_t type;         ///< 0=NoteOn, 1=NoteOff
-        int16_t pitch;        ///< MIDIノートナンバー (0-127)
-        float velocity;       ///< ベロシティ (0.0-1.0)
+        uint8_t type;         ///< 0=NoteOn, 1=NoteOff, 2=CC, 3=PitchBend
+        int16_t pitch;        ///< MIDIノートナンバー (0-127) ※NoteOn/Off用
+        float velocity;       ///< ベロシティ (0.0-1.0) ※NoteOn/Off用
+        uint8_t ccNumber = 0; ///< CC番号 (0-127) ※type==2用
+        uint8_t ccValue  = 0; ///< CC値 (0-127) ※type==2用
+        int16_t bendValue = 8192; ///< Pitch Bend値 (0-16383, 中央=8192) ※type==3用
     };
 
     /**

@@ -23,9 +23,13 @@ class MidiInputDevice : public QObject
 
 public:
     struct Message {
-        uint8_t type = 0; // 0=NoteOn, 1=NoteOff
+        uint8_t type = 0; // 0=NoteOn, 1=NoteOff, 2=CC, 3=PitchBend, 4=ChannelPressure
         int pitch = 0;
         int velocity = 0;
+        uint8_t ccNumber = 0;   ///< CC番号 (type==2)
+        uint8_t ccValue  = 0;   ///< CC値 (type==2)
+        int16_t bendValue = 8192; ///< Pitch Bend (type==3, 0-16383, 中央=8192)
+        uint8_t pressure = 0;   ///< Channel Aftertouch (type==4)
     };
 
     using MessageCallback = std::function<void(const Message&)>;

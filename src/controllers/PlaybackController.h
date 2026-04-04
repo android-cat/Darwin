@@ -11,10 +11,11 @@
 #include <cstdint>
 #include <unordered_map>
 
+#include "MidiInputDevice.h"
+
 class Project;
 class AudioEngine;
 class AudioInputCapture;
-class MidiInputDevice;
 class Track;
 class Clip;
 
@@ -87,7 +88,7 @@ private:
     void rebuildRoutingCacheLocked();
     void appendRecordedAudio(const float* left, const float* right,
                              int numFrames, double sampleRate);
-    void handleMidiMessage(uint8_t type, int pitch, int velocity);
+    void handleMidiMessage(const MidiInputDevice::Message& msg);
     Clip* finalizeAudioRecordingLocked(qint64 recordEndTick);
     Clip* finalizeMidiRecordingLocked(qint64 recordEndTick);
 
@@ -111,9 +112,13 @@ private:
     struct LiveMidiMessage {
         int trackId = -1;
         int sampleOffset = 0;
-        uint8_t type = 0;
+        uint8_t type = 0;       ///< 0=NoteOn,1=NoteOff,2=CC,3=PitchBend,4=ChannelPressure
         int16_t pitch = 0;
         float velocity = 0.0f;
+        uint8_t ccNumber = 0;   ///< CC番号 (type==2)
+        uint8_t ccValue  = 0;   ///< CC値 (type==2)
+        int16_t bendValue = 8192; ///< Pitch Bend値 (type==3)
+        uint8_t pressure = 0;   ///< Channel Aftertouch (type==4)
     };
 
     Project* m_project;
@@ -145,8 +150,14 @@ private:
         qint64 startTick = 0;
         int velocity = 0;
     };
+    struct RecordedCCEvent {
+        int ccNumber = 0;     ///< CC番号 (128=PitchBend, 129=ChannelPressure)
+        qint64 tick = 0;      ///< クリップ先頭からの相対ティック
+        int value = 0;        ///< 値
+    };
     QVector<RecordedMidiNote> m_recordedMidiNotes;
     QVector<ActiveRecordedMidiNote> m_activeRecordedMidiNotes;
+    QVector<RecordedCCEvent> m_recordedCCEvents;
 
     QPointer<Track> m_midiMonitorTrack;
     QMutex m_liveMidiMutex;

@@ -74,7 +74,7 @@ VST3プラグインのホスティング、WindowsではWASAPI、macOSではCore
 | `ComposeView` | ArrangementView + PianoRollView の分割ビュー。プラグインエディターも統合 |
 | `MixView` | ミキサーコンソール。フォルダトラックの展開/折りたたみに対応し、子トラックをフォルダカラーの薄い角丸コンテナで囲んで表示。ネストされたフォルダも再帰的に処理。折りたたみ時は子トラック数バッジを表示 |
 | `ArrangementView` | トラックヘッダー + ArrangementGridWidgetのスクロール管理。長押しD&Dによるトラック/フォルダの並び替え、フォルダへのドロップ格納に対応。実装は機能単位で分割: Headers/DragDrop |
-| `PianoRollView` | ピアノキーボード + PianoRollGridWidget + VelocityLaneWidgetのスクロール管理 |
+| `PianoRollView` | ピアノキーボード + PianoRollGridWidget + VelocityLaneWidget + ExpressionLaneWidgetのスクロール管理。レーン切替チップバーでVelocity/Expr/Mod/Bend/ATを切替 |
 
 ### 3.2 Widget Layer
 
@@ -84,6 +84,7 @@ VST3プラグインのホスティング、WindowsではWASAPI、macOSではCore
 | `TimelineWidget` | 小節番号・エクスポート範囲ハンドル・フラッグ（マーカー）の描画。長押しでフラッグ設置、右クリックでフラッグ削除 |
 | `PianoRollGridWidget` | ピアノロールグリッドの描画、ノート操作、ゴーストノート、ズーム。実装は機能単位で分割: Painting/Input |
 | `VelocityLaneWidget` | ノートベロシティの表示・編集 |
+| `ExpressionLaneWidget` | MIDI CC（Expression/Modulation/Pitch Bend/Aftertouch）のブレークポイントカーブ表示・編集。チップバーで選択されたCC番号に応じて切替 |
 | `MixerChannelWidget` | 単一ミキサーチャンネルのUI。フォルダトラックの場合はシェブロン展開/折りたたみボタン・フォルダカラーアクセント付き |
 | `KnobWidget` | 回転ノブUI |
 | `PluginEditorWidget` | VST3プラグインGUI埋め込み。Windows ではダイレクト＋ビットマップキャプチャ、macOS では NSView 直結を担当し、親UIとのイベント競合時はプラグインビューを優先する |
@@ -122,8 +123,9 @@ VST3プラグインのホスティング、WindowsではWASAPI、macOSではCore
 |---------------|------|
 | `Project` | プロジェクト全体のルートモデル。BPM、再生位置、ティック⇔ミリ秒変換、フォルダ管理（addTrackToFolder/removeTrackFromFolder/moveFolderBlock）、フラッグ（マーカー）管理（addFlag/removeFlag/nextFlag/prevFlag） |
 | `Track` | 単一トラックのデータ。ボリューム、パン、ミュート/ソロ、カラー、プラグインインスタンス保持。フォルダトラック機能（isFolder/parentFolderId/folderExpanded）対応 |
-| `Clip` | 単一クリップのデータ。MIDIクリップ（ノートデータ保持）またはオーディオクリップ（PCMデータ・波形プレビュー保持）の2種別に対応。`ClipType`列挙体で区別 |
+| `Clip` | 単一クリップのデータ。MIDIクリップ（ノートデータ＋CCオートメーション保持）またはオーディオクリップ（PCMデータ・波形プレビュー保持）の2種別に対応。`ClipType`列挙体で区別 |
 | `Note` | 単一MIDIノートのデータ |
+| `CCEvent` | MIDI CCオートメーションのブレークポイント。CC番号（0-127, 128=PitchBend, 129=ChannelPressure）、ティック位置、値を保持。Pitch Bendは14bit（0-16383） |
 
 ### 3.8 Common Layer
 
@@ -144,6 +146,7 @@ Project (1)
   ├── Track (*)
   │     ├── Clip (*)
   │     │     ├── [MIDIクリップ] Note (*)
+  │     │     ├── [MIDIクリップ] CCEvent (*)  ← Expression/Mod/PitchBend/AT等
   │     │     └── [オーディオクリップ] PCMデータ (samplesL/R), 波形プレビュー
   │     └── VST3PluginInstance (0..1)
   └── Flag (*) ← ティック位置のリスト（マーカー）
@@ -152,7 +155,7 @@ Project (1)
 - `Project`は複数の`Track`を所有
 - `Project`は複数のフラッグ（ティック位置のリスト）を所有・シリアライズ対象
 - `Track`は複数の`Clip`と、オプションで1つの`VST3PluginInstance`を所有
-- `Clip`はMIDIクリップの場合は複数の`Note`を所有、オーディオクリップの場合はPCMサンプルデータ（L/R）と波形プレビューを保持
+- `Clip`はMIDIクリップの場合は複数の`Note`と複数の`CCEvent`を所有、オーディオクリップの場合はPCMサンプルデータ（L/R）と波形プレビューを保持
 
 ## 5. シグナル/スロット設計方針
 

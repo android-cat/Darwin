@@ -63,6 +63,8 @@ set(DARWIN_SOURCES
     src/views/pianoroll/PianoRollGridWidget_Input.cpp
     src/views/pianoroll/VelocityLaneWidget.cpp
     src/views/pianoroll/VelocityLaneWidget.h
+    src/views/pianoroll/ExpressionLaneWidget.cpp
+    src/views/pianoroll/ExpressionLaneWidget.h
     # Views - Plugin Editor
     src/views/plugineditor/PluginEditorWidget.cpp
     src/views/plugineditor/PluginEditorWidget.h
@@ -92,6 +94,8 @@ set(DARWIN_SOURCES
     # Models
     src/models/Note.cpp
     src/models/Note.h
+    src/models/CCEvent.cpp
+    src/models/CCEvent.h
     src/models/Clip.cpp
     src/models/Clip.h
     src/models/Track.cpp
@@ -326,6 +330,7 @@ if(BUILD_TESTING)
         tests/TestUndoCommands.cpp
         tests/TestCommon.cpp
         src/models/Note.cpp
+        src/models/CCEvent.cpp
         src/models/Clip.cpp
         src/models/Track.cpp
         src/models/Project.cpp

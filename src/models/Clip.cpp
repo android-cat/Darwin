@@ -1,5 +1,6 @@
 #include "Clip.h"
 #include "Note.h"
+#include "CCEvent.h"
 #include "common/AudioFileReader.h"
 #include <QJsonObject>
 #include <QJsonArray>
@@ -25,6 +26,7 @@ Clip::Clip(qint64 startTick, qint64 durationTicks, QObject* parent)
 Clip::~Clip()
 {
     clearNotes();
+    clearCCEvents();
 }
 
 void Clip::setStartTick(qint64 startTick)
@@ -105,6 +107,72 @@ void Clip::clearNotes()
     emit changed();
 }
 
+// ===== CCイベント管理 =====
+
+QList<CCEvent*> Clip::ccEventsForCC(int ccNumber) const
+{
+    QList<CCEvent*> result;
+    for (CCEvent* ev : m_ccEvents) {
+        if (ev->ccNumber() == ccNumber) {
+            result.append(ev);
+        }
+    }
+    return result;
+}
+
+CCEvent* Clip::addCCEvent(int ccNumber, qint64 tick, int value)
+{
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
+    auto* event = new CCEvent(ccNumber, tick, value, this);
+    m_ccEvents.append(event);
+    connect(event, &CCEvent::changed, this, &Clip::changed);
+    emit ccEventAdded(event);
+    emit changed();
+    return event;
+}
+
+void Clip::removeCCEvent(CCEvent* event)
+{
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
+    if (m_ccEvents.removeOne(event)) {
+        emit ccEventRemoved(event);
+        emit changed();
+        event->deleteLater();
+    }
+}
+
+void Clip::clearCCEvents()
+{
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
+    for (CCEvent* event : m_ccEvents) {
+        emit ccEventRemoved(event);
+        event->deleteLater();
+    }
+    m_ccEvents.clear();
+    emit changed();
+}
+
+void Clip::clearCCEventsForCC(int ccNumber)
+{
+    QMutexLocker<QRecursiveMutex> locker(&Darwin::modelAccessMutex());
+
+    bool any = false;
+    for (int i = m_ccEvents.size() - 1; i >= 0; --i) {
+        if (m_ccEvents[i]->ccNumber() == ccNumber) {
+            CCEvent* ev = m_ccEvents.takeAt(i);
+            emit ccEventRemoved(ev);
+            ev->deleteLater();
+            any = true;
+        }
+    }
+    if (any) {
+        emit changed();
+    }
+}
+
 QJsonObject Clip::toJson() const
 {
     QJsonObject json;
@@ -123,6 +191,15 @@ QJsonObject Clip::toJson() const
             notesArray.append(note->toJson());
         }
         json["notes"] = notesArray;
+
+        // CCオートメーションイベントを保存
+        if (!m_ccEvents.isEmpty()) {
+            QJsonArray ccArray;
+            for (const CCEvent* ev : m_ccEvents) {
+                ccArray.append(ev->toJson());
+            }
+            json["ccEvents"] = ccArray;
+        }
     }
 
     return json;
@@ -169,6 +246,15 @@ Clip* Clip::fromJson(const QJsonObject& json, QObject* parent, bool deferAudioLo
                 QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 2);
                 uiYieldClock.restart();
             }
+        }
+
+        // CCオートメーションイベントの復元
+        QJsonArray ccArray = json["ccEvents"].toArray();
+        for (const QJsonValue& val : ccArray) {
+            QJsonObject ccJson = val.toObject();
+            CCEvent* ev = CCEvent::fromJson(ccJson, clip);
+            clip->m_ccEvents.append(ev);
+            QObject::connect(ev, &CCEvent::changed, clip, &Clip::changed);
         }
     }
 

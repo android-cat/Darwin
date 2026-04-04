@@ -115,6 +115,11 @@ classDiagram
         +bool isMidiClip()
         +Note* addNote(int pitch, qint64 start, qint64 duration, int velocity)
         +void removeNote(Note*)
+        +CCEvent* addCCEvent(int ccNumber, qint64 tick, int value)
+        +void removeCCEvent(CCEvent*)
+        +QList~CCEvent*~ ccEventsForCC(int ccNumber)
+        +void clearCCEvents()
+        +void clearCCEventsForCC(int ccNumber)
         +bool loadAudioFile(QString filePath, double projectSampleRate)
         +void setAudioData(QVector~float~ L, QVector~float~ R, double sr, QString path)
         +QString audioFilePath()
@@ -147,10 +152,25 @@ classDiagram
         +signal changed()
     }
 
+    class CCEvent {
+        -int m_ccNumber
+        -qint64 m_tick
+        -int m_value
+        +int ccNumber()
+        +qint64 tick()
+        +void setTick(qint64)
+        +int value()
+        +void setValue(int)
+        +QJsonObject toJson()
+        +static CCEvent* fromJson(QJsonObject)
+        +signal changed()
+    }
+
     Project "1" --> "*" Track : contains
     Track "1" --> "*" Clip : contains
     Track "1" --> "0..1" VST3PluginInstance : owns
     Clip "1" --> "*" Note : contains (MIDI)
+    Clip "1" --> "*" CCEvent : contains (MIDI CC)
     Clip "1" --> "0..1" AudioFileData : holds (Audio)
 ```
 
@@ -412,6 +432,21 @@ classDiagram
         -Clip* m_clip
         #void paintEvent(QPaintEvent*)
         #void mousePressEvent(QMouseEvent*)
+    }
+
+    class ExpressionLaneWidget {
+        -Clip* m_activeClip
+        -int m_ccNumber
+        -CCEvent* m_dragEvent
+        -bool m_isDragging
+        +void setCCNumber(int)
+        +int ccNumber()
+        +void setActiveClip(Clip*)
+        #void paintEvent(QPaintEvent*)
+        #void mousePressEvent(QMouseEvent*)
+        #void mouseMoveEvent(QMouseEvent*)
+        #void mouseReleaseEvent(QMouseEvent*)
+        #void mouseDoubleClickEvent(QMouseEvent*)
     }
 
     class PluginEditorWidget {

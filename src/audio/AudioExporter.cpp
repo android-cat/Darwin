@@ -3,6 +3,7 @@
 #include "Track.h"
 #include "Clip.h"
 #include "Note.h"
+#include "CCEvent.h"
 #include "VST3PluginInstance.h"
 
 #include <QFile>
@@ -308,6 +309,36 @@ bool AudioExporter::exportToWav(Project* project, const QString& filePath,
                             an.pitch = static_cast<int16_t>(note->pitch());
                             an.endTick = noteEnd;
                             activeNotes.push_back(an);
+                        }
+                    }
+                }
+
+                // CCオートメーションイベントの収集
+                for (const Clip* clip : track->clips()) {
+                    if (clip->isAudioClip()) continue;
+
+                    double clipStart = static_cast<double>(clip->startTick());
+                    double clipEnd = static_cast<double>(clip->endTick());
+                    if (trackEndTick < clipStart || trackStartTick >= clipEnd) continue;
+
+                    for (const CCEvent* ccEv : clip->ccEvents()) {
+                        double evTick = clipStart + static_cast<double>(ccEv->tick());
+                        if (evTick >= trackStartTick && evTick < trackEndTick) {
+                            int sampleOffset = static_cast<int>((evTick - trackStartTick) / ticksPerSample);
+                            sampleOffset = std::clamp(sampleOffset, 0, framesToProcess - 1);
+
+                            VST3PluginInstance::MidiEvent ccMidi {};
+                            ccMidi.sampleOffset = sampleOffset;
+
+                            if (ccEv->ccNumber() == CCEvent::CC_PITCH_BEND) {
+                                ccMidi.type = 3; // Pitch Bend
+                                ccMidi.bendValue = static_cast<int16_t>(ccEv->value());
+                            } else {
+                                ccMidi.type = 2; // CC
+                                ccMidi.ccNumber = static_cast<uint8_t>(ccEv->ccNumber());
+                                ccMidi.ccValue = static_cast<uint8_t>(ccEv->value());
+                            }
+                            trackEvents.push_back(ccMidi);
                         }
                     }
                 }
