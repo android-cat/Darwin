@@ -18,7 +18,7 @@ VelocityLaneWidget::VelocityLaneWidget(QWidget *parent)
     , m_isDragging(false)
 {
     setMinimumWidth(1600); // 16 bars
-    setFixedHeight(VELOCITY_LANE_HEIGHT);
+    setMinimumHeight(VELOCITY_LANE_HEIGHT);
     setMouseTracking(true);
 
     // スムーズアニメーション用タイマー（60fps）
@@ -67,7 +67,39 @@ void VelocityLaneWidget::paintEvent(QPaintEvent *event)
     // Top border
     p.setPen(Darwin::ThemeManager::instance().borderColor());
     p.drawLine(0, 0, width(), 0);
-    
+
+    // ───── 目盛り（メモリ）─────
+    {
+        const int h = height() - 4;
+        QColor scaleLineColor = Darwin::ThemeManager::instance().secondaryTextColor();
+        scaleLineColor.setAlpha(40);
+
+        // 高さに応じてステップを選択（最小18px間隔を確保）
+        static const int steps[] = {8, 16, 32, 64};
+        int step = 64;
+        for (int s : steps) {
+            double pxPerStep = static_cast<double>(h) * s / 127.0;
+            if (pxPerStep >= 18.0) {
+                step = s;
+                break;
+            }
+        }
+
+        for (int val = 0; val <= 127; val += step) {
+            double ratio = static_cast<double>(val) / 127.0;
+            int y = 2 + static_cast<int>((1.0 - ratio) * h);
+            bool isMajor = (val == 0 || val == 64 || val == 127);
+            p.setPen(QPen(scaleLineColor, 1, isMajor ? Qt::DashLine : Qt::DotLine));
+            p.drawLine(0, y, width(), y);
+        }
+        // 127はステップの倍数でない場合があるので常に描画
+        if (127 % step != 0) {
+            int y = 2;
+            p.setPen(QPen(scaleLineColor, 1, Qt::DashLine));
+            p.drawLine(0, y, width(), y);
+        }
+    }
+
     if (!m_activeClip) return;
     
     // Draw velocity bars with smooth animation
@@ -115,6 +147,15 @@ void VelocityLaneWidget::paintEvent(QPaintEvent *event)
     // アニメーション中はタイマーを起動
     if (anyAnimating && !m_animTimer.isActive()) {
         m_animTimer.start();
+    }
+
+    // クリップ範囲外をグレーアウト
+    {
+        const int clipEndX = static_cast<int>(m_activeClip->durationTicks() * PIXELS_PER_TICK);
+        QColor outOfRange(0, 0, 0, Darwin::ThemeManager::instance().isDarkMode() ? 80 : 30);
+        if (clipEndX < width()) {
+            p.fillRect(clipEndX, 0, width() - clipEndX, height(), outOfRange);
+        }
     }
 }
 

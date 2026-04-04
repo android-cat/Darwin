@@ -3,6 +3,7 @@
 #include <QWidget>
 #include <QTimer>
 #include <QPointer>
+#include <QVariantAnimation>
 
 class Clip;
 class CCEvent;
@@ -59,4 +60,9 @@ private:
     // インタラクション状態
     QPointer<CCEvent> m_dragEvent;
     bool m_isDragging = false;
+
+    // ライン接続アニメーション
+    QVariantAnimation* m_lineAnimation = nullptr;
+    qreal m_lineProgress = 1.0;
+    QPointer<CCEvent> m_animatingEvent;
 };

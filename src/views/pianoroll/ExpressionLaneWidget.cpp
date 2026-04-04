@@ -4,6 +4,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QMouseEvent>
+#include <QVariantAnimation>
 #include "common/Constants.h"
 #include "common/ThemeManager.h"
 
@@ -16,8 +17,24 @@ ExpressionLaneWidget::ExpressionLaneWidget(QWidget *parent)
     : QWidget(parent)
 {
     setMinimumWidth(1600);
-    setFixedHeight(LANE_HEIGHT);
+    setMinimumHeight(LANE_HEIGHT);
     setMouseTracking(true);
+
+    // ライン接続アニメーションの初期化
+    m_lineAnimation = new QVariantAnimation(this);
+    m_lineAnimation->setDuration(200);
+    m_lineAnimation->setStartValue(0.0);
+    m_lineAnimation->setEndValue(1.0);
+    m_lineAnimation->setEasingCurve(QEasingCurve::OutCubic);
+    connect(m_lineAnimation, &QVariantAnimation::valueChanged, this, [this](const QVariant& val) {
+        m_lineProgress = val.toReal();
+        update();
+    });
+    connect(m_lineAnimation, &QVariantAnimation::finished, this, [this]() {
+        m_animatingEvent = nullptr;
+        m_lineProgress = 1.0;
+        update();
+    });
 }
 
 QSize ExpressionLaneWidget::sizeHint() const
@@ -31,6 +48,9 @@ void ExpressionLaneWidget::setCCNumber(int ccNumber)
         m_ccNumber = ccNumber;
         m_dragEvent = nullptr;
         m_isDragging = false;
+        m_lineAnimation->stop();
+        m_animatingEvent = nullptr;
+        m_lineProgress = 1.0;
         update();
     }
 }
@@ -44,6 +64,9 @@ void ExpressionLaneWidget::setActiveClip(Clip* clip)
     m_activeClip = clip;
     m_dragEvent = nullptr;
     m_isDragging = false;
+    m_lineAnimation->stop();
+    m_animatingEvent = nullptr;
+    m_lineProgress = 1.0;
 
     if (m_activeClip) {
         connect(m_activeClip, &Clip::changed, this, [this](){ update(); });
@@ -73,18 +96,79 @@ void ExpressionLaneWidget::paintEvent(QPaintEvent *event)
     p.setPen(tm.borderColor());
     p.drawLine(0, 0, width(), 0);
 
+    // ───── 目盛り（メモリ）─────
+    {
+        const int h = height() - 4;
+        const int mv = maxValue();
+        const int cv = centerValue();
+        QColor scaleLineColor = tm.secondaryTextColor();
+        scaleLineColor.setAlpha(40);
+
+        if (mv == 16383) {
+            // Pitch Bend: 高さに応じてステップを選択
+            static const int steps[] = {512, 1024, 2048, 4096};
+            int step = 4096;
+            for (int s : steps) {
+                double pxPerStep = static_cast<double>(h) * s / 16383.0;
+                if (pxPerStep >= 18.0) {
+                    step = s;
+                    break;
+                }
+            }
+
+            for (int val = 0; val <= 16383; val += step) {
+                double ratio = static_cast<double>(val) / 16383.0;
+                int y = 2 + static_cast<int>((1.0 - ratio) * h);
+                bool isMajor = (val == 0 || val == cv || val == 16383);
+                p.setPen(QPen(scaleLineColor, 1, isMajor ? Qt::DashLine : Qt::DotLine));
+                p.drawLine(0, y, width(), y);
+            }
+            // 16383はステップの倍数でない場合があるので常に描画
+            if (16383 % step != 0) {
+                int y = 2;
+                p.setPen(QPen(scaleLineColor, 1, Qt::DashLine));
+                p.drawLine(0, y, width(), y);
+            }
+        } else {
+            // CC (0-127): 高さに応じてステップを選択
+            static const int steps[] = {8, 16, 32, 64};
+            int step = 64;
+            for (int s : steps) {
+                double pxPerStep = static_cast<double>(h) * s / 127.0;
+                if (pxPerStep >= 18.0) {
+                    step = s;
+                    break;
+                }
+            }
+
+            for (int val = 0; val <= 127; val += step) {
+                double ratio = static_cast<double>(val) / 127.0;
+                int y = 2 + static_cast<int>((1.0 - ratio) * h);
+                bool isMajor = (val == 0 || val == 64 || val == 127);
+                p.setPen(QPen(scaleLineColor, 1, isMajor ? Qt::DashLine : Qt::DotLine));
+                p.drawLine(0, y, width(), y);
+            }
+            if (127 % step != 0) {
+                int y = 2;
+                p.setPen(QPen(scaleLineColor, 1, Qt::DashLine));
+                p.drawLine(0, y, width(), y);
+            }
+        }
+    }
+
     if (!m_activeClip) return;
 
     const QList<CCEvent*> events = m_activeClip->ccEventsForCC(m_ccNumber);
 
-    // Pitch Bend の場合はセンターライン表示
     const int cv = centerValue();
-    if (cv >= 0) {
-        int cy = yFromValue(cv);
-        QColor centerColor = tm.secondaryTextColor();
-        centerColor.setAlpha(80);
-        p.setPen(QPen(centerColor, 1, Qt::DashLine));
-        p.drawLine(0, cy, width(), cy);
+
+    // クリップ範囲外をグレーアウト（イベントの有無に関わらず描画）
+    {
+        const int clipEndX = xFromTick(m_activeClip->durationTicks());
+        QColor outOfRange(0, 0, 0, tm.isDarkMode() ? 80 : 30);
+        if (clipEndX < width()) {
+            p.fillRect(clipEndX, 0, width() - clipEndX, height(), outOfRange);
+        }
     }
 
     if (events.isEmpty()) return;
@@ -104,9 +188,31 @@ void ExpressionLaneWidget::paintEvent(QPaintEvent *event)
     QPainterPath fillPath;
     const int baseline = (cv >= 0) ? yFromValue(cv) : height() - 2;
 
+    // ライン接続アニメーション状態の判定
+    bool isLineAnimating = m_animatingEvent && m_lineProgress < 1.0;
+    int animIdx = -1;
+    if (isLineAnimating) {
+        for (int i = 0; i < sorted.size(); ++i) {
+            if (sorted[i] == m_animatingEvent) {
+                animIdx = i;
+                break;
+            }
+        }
+        // 前のポイントがない場合はアニメーション不要
+        if (animIdx <= 0) isLineAnimating = false;
+    }
+
     for (int i = 0; i < sorted.size(); ++i) {
         int x = xFromTick(sorted[i]->tick());
         int y = yFromValue(sorted[i]->value());
+
+        // アニメーション中のポイントは前のポイントから伸びるように補間
+        if (isLineAnimating && i == animIdx) {
+            int prevX = xFromTick(sorted[animIdx - 1]->tick());
+            int prevY = yFromValue(sorted[animIdx - 1]->value());
+            x = prevX + static_cast<int>((x - prevX) * m_lineProgress);
+            y = prevY + static_cast<int>((y - prevY) * m_lineProgress);
+        }
 
         if (i == 0) {
             curvePath.moveTo(x, y);
@@ -120,8 +226,8 @@ void ExpressionLaneWidget::paintEvent(QPaintEvent *event)
 
     // 塗り潰し（最後のポイントからベースラインに降ろして閉じる）
     if (!sorted.isEmpty()) {
-        int lastX = xFromTick(sorted.last()->tick());
-        fillPath.lineTo(lastX, baseline);
+        QPointF lastPt = fillPath.currentPosition();
+        fillPath.lineTo(lastPt.x(), baseline);
         fillPath.closeSubpath();
         p.setPen(Qt::NoPen);
         p.setBrush(fillColor);
@@ -134,9 +240,18 @@ void ExpressionLaneWidget::paintEvent(QPaintEvent *event)
     p.drawPath(curvePath);
 
     // ポイントの描画
-    for (const CCEvent* ev : sorted) {
+    for (int i = 0; i < sorted.size(); ++i) {
+        const CCEvent* ev = sorted[i];
         int x = xFromTick(ev->tick());
         int y = yFromValue(ev->value());
+
+        // アニメーション中のポイント位置を補間
+        if (isLineAnimating && i == animIdx) {
+            int prevX = xFromTick(sorted[animIdx - 1]->tick());
+            int prevY = yFromValue(sorted[animIdx - 1]->value());
+            x = prevX + static_cast<int>((x - prevX) * m_lineProgress);
+            y = prevY + static_cast<int>((y - prevY) * m_lineProgress);
+        }
 
         QColor ptColor = (ev == m_dragEvent) ? lineColor.lighter(140) : lineColor;
         p.setPen(QPen(ptColor, 1.5));
@@ -156,10 +271,18 @@ void ExpressionLaneWidget::mousePressEvent(QMouseEvent *event)
     } else {
         // 新しいポイントを追加
         qint64 tick = tickFromX(event->pos().x());
+        // クリップ範囲外には配置しない
+        if (tick < 0 || tick > m_activeClip->durationTicks()) return;
         int value = valueFromY(event->pos().y());
         CCEvent* newEvent = m_activeClip->addCCEvent(m_ccNumber, tick, value);
         m_dragEvent = newEvent;
         m_isDragging = true;
+
+        // ライン接続アニメーション開始
+        m_animatingEvent = newEvent;
+        m_lineProgress = 0.0;
+        m_lineAnimation->stop();
+        m_lineAnimation->start();
     }
     update();
 }
@@ -168,6 +291,8 @@ void ExpressionLaneWidget::mouseMoveEvent(QMouseEvent *event)
 {
     if (m_isDragging && m_dragEvent) {
         qint64 tick = tickFromX(event->pos().x());
+        // クリップ範囲内にクランプ
+        tick = qBound(0LL, tick, m_activeClip->durationTicks());
         int value = valueFromY(event->pos().y());
         m_dragEvent->setTick(tick);
         m_dragEvent->setValue(value);
