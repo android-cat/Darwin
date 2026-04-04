@@ -86,6 +86,7 @@ void PianoRollGridWidget::mousePressEvent(QMouseEvent *event)
                 m_isResizingLeft = false;
                 m_isDragging = true;
             }
+
             break;
         }
     }
@@ -110,7 +111,16 @@ void PianoRollGridWidget::mousePressEvent(QMouseEvent *event)
             }
             m_selectedNote = clickedNote;
         }
+
+        // ドラッグ/リサイズ開始時の元位置を記録（Undo用）
+        if (m_isDragging || m_isResizing || m_isResizingLeft) {
+            m_noteOrigStates.clear();
+            for (Note* n : m_selectedNotes) {
+                m_noteOrigStates[n] = { n->pitch(), n->startTick(), n->durationTicks() };
+            }
+        }
     } else {
+
         // 空白エリアをクリック → 範囲選択開始
         if (!(event->modifiers() & Qt::ControlModifier)) {
             m_selectedNote = nullptr;
@@ -347,17 +357,12 @@ void PianoRollGridWidget::mouseReleaseEvent(QMouseEvent *event)
         update();
     }
     
-    // ── 操作完了後のグリッドスナップ ──
+    // ── 操作完了後のグリッドスナップ＋Undoコマンド登録 ──
     if ((m_isDragging || m_isResizing || m_isResizingLeft) && m_activeClip && !m_selectedNotes.isEmpty()) {
+        // まずグリッドスナップを適用
         for (Note* note : m_selectedNotes) {
             if (m_isDragging) {
-                qint64 finalTick = snapTick(note->startTick());
-                int finalPitch = note->pitch();
-                if (m_undoStack) {
-                    m_undoStack->push(new MoveNoteCommand(note, finalPitch, finalTick));
-                } else {
-                    note->setStartTick(finalTick);
-                }
+                note->setStartTick(snapTick(note->startTick()));
             } else if (m_isResizingLeft) {
                 qint64 oldEnd = note->startTick() + note->durationTicks();
                 qint64 newStart = snapTick(note->startTick());
@@ -366,14 +371,48 @@ void PianoRollGridWidget::mouseReleaseEvent(QMouseEvent *event)
             } else if (m_isResizing) {
                 qint64 oldEnd = note->startTick() + note->durationTicks();
                 qint64 snappedEnd = snapTick(oldEnd);
-                qint64 newDur = qMax((qint64)1, snappedEnd - note->startTick());
-                if (m_undoStack) {
-                    m_undoStack->push(new ResizeNoteCommand(note, newDur));
-                } else {
-                    note->setDurationTicks(newDur);
-                }
+                note->setDurationTicks(qMax((qint64)1, snappedEnd - note->startTick()));
             }
         }
+
+        // スナップ後の最終位置を記録してから、元に戻してUndoコマンドを発行
+        if (m_undoStack && !m_noteOrigStates.isEmpty()) {
+            struct NoteFinalState { int pitch; qint64 startTick; qint64 durationTicks; };
+            QHash<Note*, NoteFinalState> finals;
+            for (Note* note : m_selectedNotes) {
+                finals[note] = { note->pitch(), note->startTick(), note->durationTicks() };
+            }
+
+            // 元の位置に戻す（MoveNoteCommand が old を正しくキャプチャできるように）
+            for (Note* note : m_selectedNotes) {
+                auto it = m_noteOrigStates.find(note);
+                if (it != m_noteOrigStates.end()) {
+                    note->setPitch(it->pitch);
+                    note->setStartTick(it->startTick);
+                    note->setDurationTicks(it->durationTicks);
+                }
+            }
+
+            if (m_selectedNotes.size() > 1 || m_isResizingLeft) {
+                m_undoStack->beginMacro(m_isDragging ? "Move Notes" : "Resize Notes");
+            }
+            for (Note* note : m_selectedNotes) {
+                auto fit = finals.find(note);
+                if (fit == finals.end()) continue;
+                if (m_isDragging) {
+                    m_undoStack->push(new MoveNoteCommand(note, fit->pitch, fit->startTick));
+                } else if (m_isResizingLeft) {
+                    m_undoStack->push(new MoveNoteCommand(note, fit->pitch, fit->startTick));
+                    m_undoStack->push(new ResizeNoteCommand(note, fit->durationTicks));
+                } else if (m_isResizing) {
+                    m_undoStack->push(new ResizeNoteCommand(note, fit->durationTicks));
+                }
+            }
+            if (m_selectedNotes.size() > 1 || m_isResizingLeft) {
+                m_undoStack->endMacro();
+            }
+        }
+        m_noteOrigStates.clear();
         update();
     }
 
@@ -463,6 +502,9 @@ void PianoRollGridWidget::keyPressEvent(QKeyEvent *event)
         Track* parentTrack = qobject_cast<Track*>(m_activeClip->parent());
         if (parentTrack) baseColor = parentTrack->color();
         
+        if (m_undoStack) {
+            m_undoStack->beginMacro("Delete Notes");
+        }
         for (Note* note : m_selectedNotes) {
             int x = static_cast<int>((note->startTick() + m_activeClip->startTick()) * pixelsPerTick());
             int w = static_cast<int>(note->durationTicks() * pixelsPerTick());
@@ -470,7 +512,14 @@ void PianoRollGridWidget::keyPressEvent(QKeyEvent *event)
             QRect noteRect(x, y + 2, qMax(4, w), ROW_HEIGHT - 4);
             startBurstAnim(QRectF(noteRect), baseColor);
             markNoteForBurstRemoval(note);
-            m_activeClip->removeNote(note);
+            if (m_undoStack) {
+                m_undoStack->push(new RemoveNoteCommand(m_activeClip, note));
+            } else {
+                m_activeClip->removeNote(note);
+            }
+        }
+        if (m_undoStack) {
+            m_undoStack->endMacro();
         }
         m_selectedNote = nullptr;
         m_selectedNotes.clear();
@@ -537,6 +586,9 @@ void PianoRollGridWidget::keyPressEvent(QKeyEvent *event)
             minStart = qMin(minStart, st);
         }
 
+        if (m_undoStack) {
+            m_undoStack->beginMacro("Paste Notes");
+        }
         QList<Note*> pastedNotes;
         Note* lastPasted = nullptr;
         for (const QJsonValue& val : notesArray) {
@@ -550,13 +602,21 @@ void PianoRollGridWidget::keyPressEvent(QKeyEvent *event)
             if (startTick >= 0 && startTick < m_activeClip->durationTicks()) {
                 qint64 maxDur = m_activeClip->durationTicks() - startTick;
                 duration = qMin(duration, maxDur);
-                lastPasted = m_activeClip->addNote(pitch, startTick, duration, velocity);
+                if (m_undoStack) {
+                    auto* cmd = new AddNoteCommand(m_activeClip, pitch, startTick, duration, velocity);
+                    m_undoStack->push(cmd);
+                    lastPasted = cmd->createdNote();
+                } else {
+                    lastPasted = m_activeClip->addNote(pitch, startTick, duration, velocity);
+                }
                 if (lastPasted) {
-                    // 貼り付け直後にまとめて移動しやすいよう、生成したノートを記録しておく。
                     pastedNotes.append(lastPasted);
                     startNoteAnim(lastPasted, NoteAnim::PopIn);
                 }
             }
+        }
+        if (m_undoStack) {
+            m_undoStack->endMacro();
         }
 
         if (!pastedNotes.isEmpty()) {
@@ -589,6 +649,9 @@ void PianoRollGridWidget::keyPressEvent(QKeyEvent *event)
             Track* parentTrack = qobject_cast<Track*>(m_activeClip->parent());
             if (parentTrack) baseColor = parentTrack->color();
             
+            if (m_undoStack) {
+                m_undoStack->beginMacro("Cut Notes");
+            }
             for (Note* note : m_selectedNotes) {
                 int nx = static_cast<int>((note->startTick() + m_activeClip->startTick()) * pixelsPerTick());
                 int nw = static_cast<int>(note->durationTicks() * pixelsPerTick());
@@ -601,6 +664,9 @@ void PianoRollGridWidget::keyPressEvent(QKeyEvent *event)
                 } else {
                     m_activeClip->removeNote(note);
                 }
+            }
+            if (m_undoStack) {
+                m_undoStack->endMacro();
             }
             m_selectedNote = nullptr;
             m_selectedNotes.clear();

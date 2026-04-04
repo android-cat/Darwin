@@ -206,6 +206,7 @@ void PianoRollGridWidget::setProject(Project* project)
             connect(clip, &Clip::noteRemoved, this, [this](Note* note){
                 if (m_selectedNote == note) m_selectedNote = nullptr;
                 if (m_selectedNotes.contains(note)) m_selectedNotes.removeAll(note);
+                m_noteAnims.remove(note);
 
                 // 通常の削除操作はバーストだけ見せ、Undo/Redo 由来の削除だけフェードアウトさせる。
                 if (m_notesPendingBurstRemoval.remove(note) == 0) {

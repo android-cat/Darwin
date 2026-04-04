@@ -335,6 +335,39 @@ bool MoveClipCommand::mergeWith(const QUndoCommand* other)
     return true;
 }
 
+// ===== クリップのトラック間移動コマンド =====
+
+MoveClipToTrackCommand::MoveClipToTrackCommand(Clip* clip, Track* srcTrack, Track* dstTrack,
+                                               QUndoCommand* parent)
+    : QUndoCommand("Move Clip to Track", parent)
+    , m_clip(clip)
+    , m_srcTrack(srcTrack)
+    , m_dstTrack(dstTrack)
+    , m_firstRedo(true)
+{
+}
+
+void MoveClipToTrackCommand::undo()
+{
+    if (m_dstTrack && m_srcTrack && m_clip) {
+        m_dstTrack->takeClip(m_clip);
+        m_srcTrack->insertClip(m_clip);
+    }
+}
+
+void MoveClipToTrackCommand::redo()
+{
+    if (m_firstRedo) {
+        // 初回は既に移動済みなのでスキップ
+        m_firstRedo = false;
+        return;
+    }
+    if (m_srcTrack && m_dstTrack && m_clip) {
+        m_srcTrack->takeClip(m_clip);
+        m_dstTrack->insertClip(m_clip);
+    }
+}
+
 // ===== クリップリサイズコマンド =====
 
 ResizeClipCommand::ResizeClipCommand(Clip* clip, qint64 newDurationTicks,

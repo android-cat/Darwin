@@ -19,6 +19,7 @@
 class Project;
 class Track;
 class Clip;
+class Note;
 class QUndoStack;
 
 class QScrollArea;
@@ -143,7 +144,16 @@ private:
     bool m_isResizing;      // 右端リサイズ
     bool m_isResizingLeft;  // 左端リサイズ
     QPoint m_lastMousePos;
-    
+
+    // ドラッグ/リサイズ開始時の元位置（Undo用）
+    struct ClipOrigState { qint64 startTick; qint64 durationTicks; };
+    QHash<int, ClipOrigState> m_clipOrigStates;  // clipId → 元の状態
+
+    // リサイズ時のノート元状態（Undo用）
+    struct NoteOrigState { qint64 startTick; qint64 durationTicks; };
+    QHash<Note*, NoteOrigState> m_resizeNoteOrigStates;
+    QList<Note*> m_resizeRemovedNotes;
+
     // クリップのトラック間移動
     int m_dragSourceTrackIndex = -1;
     int m_dragCurrentTrackIndex = -1;

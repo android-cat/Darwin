@@ -93,6 +93,20 @@ void ArrangementGridWidget::mousePressEvent(QMouseEvent *event)
             }
             if (m_selectedClipId != -1) break; // Found clip, break outer loop
         }
+
+        // ドラッグ/リサイズ開始時の元位置を記録（Undo用）
+        if ((m_isDragging || m_isResizing || m_isResizingLeft) && clickedClip) {
+            m_clipOrigStates.clear();
+            m_clipOrigStates[clickedClip->id()] = { clickedClip->startTick(), clickedClip->durationTicks() };
+            // リサイズ時はノート状態も保存
+            m_resizeNoteOrigStates.clear();
+            m_resizeRemovedNotes.clear();
+            if (m_isResizing || m_isResizingLeft) {
+                for (Note* n : clickedClip->notes()) {
+                    m_resizeNoteOrigStates[n] = { n->startTick(), n->durationTicks() };
+                }
+            }
+        }
     }
     
     emit clipSelected(clickedClip);
@@ -226,7 +240,8 @@ void ArrangementGridWidget::mouseMoveEvent(QMouseEvent *event)
                         }
                     }
                     for (Note* note : toRemove) {
-                        selectedClip->removeNote(note);
+                        Note* taken = selectedClip->takeNote(note);
+                        if (taken) m_resizeRemovedNotes.append(taken);
                     }
                     selectedClip->setStartTick(newStart);
                     selectedClip->setDurationTicks(newDuration);
@@ -248,7 +263,8 @@ void ArrangementGridWidget::mouseMoveEvent(QMouseEvent *event)
                         }
                     }
                     for (Note* note : toRemove) {
-                        selectedClip->removeNote(note);
+                        Note* taken = selectedClip->takeNote(note);
+                        if (taken) m_resizeRemovedNotes.append(taken);
                     }
                     visualChanged = true;
                 }
@@ -302,7 +318,7 @@ void ArrangementGridWidget::mouseReleaseEvent(QMouseEvent *event)
         return;
     }
     
-    // ── 操作完了後のグリッドスナップ ──
+    // ── 操作完了後のグリッドスナップ + Undoコマンド登録 ──
     if ((m_isDragging || m_isResizing || m_isResizingLeft) && m_project && m_selectedClipId != -1) {
         Clip* snapClip = nullptr;
         for (int i = 0; i < m_project->trackCount(); ++i) {
@@ -311,71 +327,148 @@ void ArrangementGridWidget::mouseReleaseEvent(QMouseEvent *event)
             }
             if (snapClip) break;
         }
+
+        // トラック間移動の判定
+        bool crossTrack = m_isDragging
+            && m_dragSourceTrackIndex >= 0 && m_dragCurrentTrackIndex >= 0
+            && m_dragSourceTrackIndex != m_dragCurrentTrackIndex;
+        QList<Track*> visTracks_ = crossTrack ? visibleTracks() : QList<Track*>();
+        Track* srcTrack = crossTrack && m_dragSourceTrackIndex < visTracks_.size()
+            ? visTracks_.at(m_dragSourceTrackIndex) : nullptr;
+        Track* dstTrack = crossTrack && m_dragCurrentTrackIndex < visTracks_.size()
+            ? visTracks_.at(m_dragCurrentTrackIndex) : nullptr;
+
         if (snapClip) {
+            // まずグリッドスナップを直接適用
+            qint64 finalStart = snapClip->startTick();
+            qint64 finalDur = snapClip->durationTicks();
+
             if (m_isDragging) {
-                snapClip->setStartTick(snapTick(snapClip->startTick()));
+                finalStart = snapTick(snapClip->startTick());
+                snapClip->setStartTick(finalStart);
             } else if (m_isResizingLeft) {
                 qint64 oldEnd = snapClip->startTick() + snapClip->durationTicks();
                 qint64 newStart = snapTick(snapClip->startTick());
+                qint64 newDur = qMax((qint64)TICKS_PER_BEAT, oldEnd - newStart);
                 snapClip->setStartTick(newStart);
-                snapClip->setDurationTicks(qMax((qint64)TICKS_PER_BEAT, oldEnd - newStart));
+                snapClip->setDurationTicks(newDur);
+                finalStart = newStart;
+                finalDur = newDur;
             } else if (m_isResizing) {
                 qint64 rawEnd = snapClip->startTick() + snapClip->durationTicks();
                 qint64 snappedEnd = snapTick(rawEnd);
-                qint64 newDur = snappedEnd - snapClip->startTick();
-                qint64 finalDur = qMax((qint64)TICKS_PER_BEAT, newDur);
-                if (m_undoStack) {
-                    m_undoStack->push(new ResizeClipCommand(snapClip, finalDur));
-                } else {
-                    snapClip->setDurationTicks(finalDur);
-                }
+                qint64 newDur = qMax((qint64)TICKS_PER_BEAT, snappedEnd - snapClip->startTick());
+                snapClip->setDurationTicks(newDur);
+                finalDur = newDur;
             }
-        }
-    }
 
-    // ── クリップのトラック間移動 ──
-    if (m_isDragging && m_project && m_selectedClipId != -1 
-        && m_dragSourceTrackIndex >= 0 && m_dragCurrentTrackIndex >= 0
-        && m_dragSourceTrackIndex != m_dragCurrentTrackIndex) {
-        
-        QList<Track*> visTracks_ = visibleTracks();
-        Track* srcTrack = (m_dragSourceTrackIndex < visTracks_.size()) ? visTracks_.at(m_dragSourceTrackIndex) : nullptr;
-        Track* dstTrack = (m_dragCurrentTrackIndex < visTracks_.size()) ? visTracks_.at(m_dragCurrentTrackIndex) : nullptr;
-        
-        if (srcTrack && dstTrack) {
-            // クリップを探す
-            Clip* clipToMove = nullptr;
-            for (Clip* clip : srcTrack->clips()) {
-                if (clip->id() == m_selectedClipId) {
-                    clipToMove = clip;
-                    break;
-                }
-            }
-            if (clipToMove) {
-                if (m_undoStack) {
-                    // トラック間移動コマンドは未実装なので注意
-                    // 現在の UndoCommands.h には MoveClipCommand (startTickのみ) しかない
-                    // とりあえず startTick の移動だけでもコマンド化する
-                    m_undoStack->push(new MoveClipCommand(clipToMove, clipToMove->startTick()));
-                }
-                Clip* taken = srcTrack->takeClip(clipToMove);
+            // トラック間移動を実行（Undoコマンド発行前に実体を移す）
+            if (crossTrack && srcTrack && dstTrack) {
+                Clip* taken = srcTrack->takeClip(snapClip);
                 if (taken) {
                     dstTrack->insertClip(taken);
-                    update();
                 }
             }
-        }
-    } else if (m_isDragging && m_project && m_selectedClipId != -1) {
-        // 同一トラック内の移動
-        Clip* movedClip = nullptr;
-        for (int i = 0; i < m_project->trackCount(); ++i) {
-            for (Clip* clip : m_project->trackAt(i)->clips()) {
-                if (clip->id() == m_selectedClipId) { movedClip = clip; break; }
+
+            // リサイズ時: スナップ後にクリップ範囲外になったノートを追加トリム/除去
+            struct NoteFinal { qint64 startTick; qint64 durationTicks; };
+            QHash<Note*, NoteFinal> noteFinals;
+            if (m_isResizingLeft || m_isResizing) {
+                // 右端リサイズのスナップでクリップが縮んだ場合のノート調整
+                if (m_isResizing) {
+                    QList<Note*> extraRemove;
+                    for (Note* note : snapClip->notes()) {
+                        if (note->startTick() >= finalDur) {
+                            extraRemove.append(note);
+                        } else if (note->startTick() + note->durationTicks() > finalDur) {
+                            note->setDurationTicks(finalDur - note->startTick());
+                        }
+                    }
+                    for (Note* note : extraRemove) {
+                        Note* taken = snapClip->takeNote(note);
+                        if (taken) m_resizeRemovedNotes.append(taken);
+                    }
+                }
+                for (Note* note : snapClip->notes()) {
+                    noteFinals[note] = { note->startTick(), note->durationTicks() };
+                }
+            }
+
+            // 元の位置に戻してからUndoコマンドを発行（コマンドが old を正しくキャプチャするため）
+            if (m_undoStack && m_clipOrigStates.contains(snapClip->id())) {
+                auto orig = m_clipOrigStates[snapClip->id()];
+
+                // リサイズ時: 削除されたノートを再挿入し、全ノートを元の状態に復元
+                if (m_isResizingLeft || m_isResizing) {
+                    for (Note* note : m_resizeRemovedNotes) {
+                        snapClip->insertNote(note);
+                    }
+                    for (auto it = m_resizeNoteOrigStates.begin(); it != m_resizeNoteOrigStates.end(); ++it) {
+                        it.key()->setStartTick(it->startTick);
+                        it.key()->setDurationTicks(it->durationTicks);
+                    }
+                }
+
+                snapClip->setStartTick(orig.startTick);
+                snapClip->setDurationTicks(orig.durationTicks);
+
+                // 実際にノート変更があるか判定
+                bool hasNoteChanges = !m_resizeRemovedNotes.isEmpty();
+                if (!hasNoteChanges) {
+                    for (auto it = noteFinals.begin(); it != noteFinals.end(); ++it) {
+                        auto origIt = m_resizeNoteOrigStates.find(it.key());
+                        if (origIt != m_resizeNoteOrigStates.end()
+                            && (it->startTick != origIt->startTick || it->durationTicks != origIt->durationTicks)) {
+                            hasNoteChanges = true;
+                            break;
+                        }
+                    }
+                }
+                bool needMacro = m_isResizingLeft || crossTrack || (m_isResizing && hasNoteChanges);
+                if (needMacro) {
+                    m_undoStack->beginMacro(m_isDragging ? "Move Clip" : "Resize Clip");
+                }
+
+                if (m_isDragging) {
+                    m_undoStack->push(new MoveClipCommand(snapClip, finalStart));
+                } else if (m_isResizingLeft) {
+                    m_undoStack->push(new MoveClipCommand(snapClip, finalStart));
+                    m_undoStack->push(new ResizeClipCommand(snapClip, finalDur));
+                } else if (m_isResizing) {
+                    m_undoStack->push(new ResizeClipCommand(snapClip, finalDur));
+                }
+
+                // ノート変更コマンド（リサイズで変更・削除されたノート）
+                for (auto it = noteFinals.begin(); it != noteFinals.end(); ++it) {
+                    Note* note = it.key();
+                    auto origIt = m_resizeNoteOrigStates.find(note);
+                    if (origIt == m_resizeNoteOrigStates.end()) continue;
+                    if (it->startTick != origIt->startTick) {
+                        m_undoStack->push(new MoveNoteCommand(note, note->pitch(), it->startTick));
+                    }
+                    if (it->durationTicks != origIt->durationTicks) {
+                        m_undoStack->push(new ResizeNoteCommand(note, it->durationTicks));
+                    }
+                }
+                for (Note* note : m_resizeRemovedNotes) {
+                    m_undoStack->push(new RemoveNoteCommand(snapClip, note));
+                }
+
+                if (crossTrack && srcTrack && dstTrack) {
+                    m_undoStack->push(new MoveClipToTrackCommand(snapClip, srcTrack, dstTrack));
+                }
+
+                if (needMacro) {
+                    m_undoStack->endMacro();
+                }
+            } else {
+                // Undoスタックなし: 取り出したノートを削除
+                qDeleteAll(m_resizeRemovedNotes);
             }
         }
-        if (movedClip && m_undoStack) {
-            m_undoStack->push(new MoveClipCommand(movedClip, movedClip->startTick()));
-        }
+        m_clipOrigStates.clear();
+        m_resizeNoteOrigStates.clear();
+        m_resizeRemovedNotes.clear();
     }
     
     m_isDragging = false;
@@ -471,7 +564,11 @@ void ArrangementGridWidget::keyPressEvent(QKeyEvent *event)
                         int cw = static_cast<int>(clip->durationTicks() * pixelsPerTick());
                         QRect clipRect(cx, yTrack + 10, cw, rowHeight - 20);
                         startBurstAnim(QRectF(clipRect), track->color(), i);
-                        track->removeClip(clip);
+                        if (m_undoStack) {
+                            m_undoStack->push(new RemoveClipCommand(track, clip));
+                        } else {
+                            track->removeClip(clip);
+                        }
                         m_selectedClipId = -1;
                         update();
                         return;
@@ -528,6 +625,10 @@ void ArrangementGridWidget::keyPressEvent(QKeyEvent *event)
         QList<Track*> visTracks = visibleTracks();
         int targetRow = qMax(0, mousePos.y() / rowHeight);
 
+        if (m_undoStack) {
+            m_undoStack->beginMacro("Paste Clip");
+        }
+
         Track* track = nullptr;
         if (targetRow < visTracks.size()) {
             Track* candidate = visTracks.at(targetRow);
@@ -549,22 +650,35 @@ void ArrangementGridWidget::keyPressEvent(QKeyEvent *event)
             updateDynamicSize();
         }
 
-        Clip* newClip = track->addClip(pasteStart, durationTicks);
-
-        // ノートをコピー
-        QJsonArray notesArray = clipJson["notes"].toArray();
-        for (const QJsonValue& val : notesArray) {
-            QJsonObject noteJson = val.toObject();
-            int pitch = noteJson["pitch"].toInt(60);
-            qint64 noteSt = static_cast<qint64>(noteJson["startTick"].toDouble(0));
-            qint64 noteDur = static_cast<qint64>(noteJson["durationTicks"].toDouble(480));
-            int velocity = noteJson["velocity"].toInt(100);
-            newClip->addNote(pitch, noteSt, noteDur, velocity);
+        Clip* newClip = nullptr;
+        if (m_undoStack) {
+            auto* cmd = new AddClipCommand(track, pasteStart, durationTicks);
+            m_undoStack->push(cmd);
+            newClip = cmd->createdClip();
+        } else {
+            newClip = track->addClip(pasteStart, durationTicks);
         }
 
-        m_selectedClipId = newClip->id();
-        startClipAnim(newClip->id(), ClipAnim::PopIn);
-        emit clipSelected(newClip);
+        // ノートをコピー
+        if (newClip) {
+            QJsonArray notesArray = clipJson["notes"].toArray();
+            for (const QJsonValue& val : notesArray) {
+                QJsonObject noteJson = val.toObject();
+                int pitch = noteJson["pitch"].toInt(60);
+                qint64 noteSt = static_cast<qint64>(noteJson["startTick"].toDouble(0));
+                qint64 noteDur = static_cast<qint64>(noteJson["durationTicks"].toDouble(480));
+                int velocity = noteJson["velocity"].toInt(100);
+                newClip->addNote(pitch, noteSt, noteDur, velocity);
+            }
+
+            m_selectedClipId = newClip->id();
+            startClipAnim(newClip->id(), ClipAnim::PopIn);
+            emit clipSelected(newClip);
+        }
+
+        if (m_undoStack) {
+            m_undoStack->endMacro();
+        }
         update();
     }
 

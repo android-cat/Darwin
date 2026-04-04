@@ -192,6 +192,24 @@ private:
 };
 
 /**
+ * @brief クリップのトラック間移動コマンド
+ */
+class MoveClipToTrackCommand : public QUndoCommand
+{
+public:
+    MoveClipToTrackCommand(Clip* clip, Track* srcTrack, Track* dstTrack,
+                           QUndoCommand* parent = nullptr);
+    void undo() override;
+    void redo() override;
+
+private:
+    Clip* m_clip;
+    Track* m_srcTrack;
+    Track* m_dstTrack;
+    bool m_firstRedo;
+};
+
+/**
  * @brief クリップリサイズコマンド
  */
 class ResizeClipCommand : public QUndoCommand

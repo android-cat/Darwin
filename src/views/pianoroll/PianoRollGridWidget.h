@@ -83,6 +83,10 @@ private:
     QTimer m_longPressTimer;
     QPoint m_lastMousePos;
     QPoint m_pressPos;
+
+    // ドラッグ/リサイズ開始時の元位置を保持（Undoで戻す先）
+    struct NoteOrigState { int pitch; qint64 startTick; qint64 durationTicks; };
+    QHash<Note*, NoteOrigState> m_noteOrigStates;
     
     // 範囲選択（ラバーバンド）
     bool m_isRubberBanding = false;
