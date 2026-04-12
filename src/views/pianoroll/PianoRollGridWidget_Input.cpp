@@ -205,7 +205,8 @@ void PianoRollGridWidget::mouseMoveEvent(QMouseEvent *event)
         return;
     }
 
-    if (!m_activeClip || !m_selectedNote) {
+    // 操作中でなければカーソルを更新（範囲選択後でもリサイズカーソルを表示）
+    if (!m_isDragging && !m_isResizing && !m_isResizingLeft) {
         bool overLeftEdge = false;
         bool overRightEdge = false;
         Note* hoveredNote = nullptr;
@@ -278,6 +279,8 @@ void PianoRollGridWidget::mouseMoveEvent(QMouseEvent *event)
 
         return;
     }
+
+    if (!m_activeClip || !m_selectedNote) return;
     
     int dx = event->pos().x() - m_lastMousePos.x();
     int dy = event->pos().y() - m_lastMousePos.y();

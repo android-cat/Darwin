@@ -4,8 +4,11 @@
 #include "Clip.h"
 #include "Note.h"
 #include "VST3PluginInstance.h"
+#include "common/Constants.h"
 
 #include <QDebug>
+
+using namespace Darwin;
 
 // ===== ノート追加コマンド =====
 
@@ -517,5 +520,196 @@ void RemoveTrackCommand::redo()
     if (m_project && m_track) {
         m_project->takeTrack(m_track);
         m_ownsTrack = true;
+    }
+}
+
+// ===== クリップ分割コマンド =====
+
+SplitClipCommand::SplitClipCommand(Track* track, Clip* clip, qint64 relSplitTick,
+                                   double bpm, QUndoCommand* parent)
+    : QUndoCommand("Split Clip", parent)
+    , m_track(track)
+    , m_clip(clip)
+    , m_newClip(nullptr)
+    , m_relSplitTick(relSplitTick)
+    , m_bpm(bpm)
+    , m_origDuration(clip->durationTicks())
+    , m_isAudioClip(clip->isAudioClip())
+    , m_audioSampleRate(clip->audioSampleRate())
+    , m_audioFilePath(clip->audioFilePath())
+    , m_ownsNewClip(false)
+    , m_ownsMoved(false)
+    , m_firstRedo(true)
+{
+    // オーディオの場合、分割前にフルデータを保存
+    if (m_isAudioClip) {
+        m_origFullAudioL = clip->audioSamplesL();
+        m_origFullAudioR = clip->audioSamplesR();
+
+        double ticksPerSecond = m_bpm * TICKS_PER_BEAT / 60.0;
+        double splitSeconds = static_cast<double>(relSplitTick) / ticksPerSecond;
+        qint64 splitSample = static_cast<qint64>(splitSeconds * m_audioSampleRate);
+
+        m_firstHalfAudioL = m_origFullAudioL.mid(0, static_cast<int>(splitSample));
+        m_firstHalfAudioR = m_origFullAudioR.mid(0, static_cast<int>(splitSample));
+        if (splitSample < m_origFullAudioL.size()) {
+            m_secondHalfAudioL = m_origFullAudioL.mid(static_cast<int>(splitSample));
+            m_secondHalfAudioR = m_origFullAudioR.mid(static_cast<int>(splitSample));
+        }
+    }
+}
+
+SplitClipCommand::~SplitClipCommand()
+{
+    if (m_ownsNewClip && m_newClip) {
+        delete m_newClip;
+    }
+    if (m_ownsMoved) {
+        qDeleteAll(m_movedNotes);
+    }
+}
+
+void SplitClipCommand::undo()
+{
+    if (!m_track || !m_clip || !m_newClip) return;
+
+    // 新クリップのノートをすべて削除（redo時にaddNoteで新規生成したもの）
+    if (!m_isAudioClip) {
+        QList<Note*> newNotes = m_newClip->notes();
+        for (Note* note : newNotes) {
+            m_newClip->takeNote(note);
+            delete note;
+        }
+    }
+
+    // 新クリップをトラックから取り出す
+    m_track->takeClip(m_newClip);
+    m_ownsNewClip = true;
+
+    // 移動したノートを元クリップに戻す
+    for (Note* note : m_movedNotes) {
+        m_clip->insertNote(note);
+    }
+    m_ownsMoved = false;
+
+    // トリムされたノートの長さを復元
+    for (const auto& tn : m_truncatedNotes) {
+        tn.note->setDurationTicks(tn.origDuration);
+    }
+
+    // 元クリップのdurationを復元
+    m_clip->setDurationTicks(m_origDuration);
+
+    // オーディオデータを元に戻す
+    if (m_isAudioClip) {
+        m_clip->setAudioData(m_origFullAudioL, m_origFullAudioR,
+                             m_audioSampleRate, m_audioFilePath);
+    }
+}
+
+void SplitClipCommand::redo()
+{
+    if (!m_track || !m_clip) return;
+
+    if (m_firstRedo) {
+        // ── 初回: 分割を実行 ──
+        qint64 origStart = m_clip->startTick();
+        qint64 newStart = origStart + m_relSplitTick;
+        qint64 newDuration = m_origDuration - m_relSplitTick;
+
+        m_newClip = m_track->addClip(newStart, newDuration);
+
+        if (m_isAudioClip) {
+            m_newClip->setAudioData(m_secondHalfAudioL, m_secondHalfAudioR,
+                                    m_audioSampleRate, m_audioFilePath);
+            m_clip->setAudioData(m_firstHalfAudioL, m_firstHalfAudioR,
+                                 m_audioSampleRate, m_audioFilePath);
+        } else {
+            // MIDIノート分割
+            m_movedNotes.clear();
+            m_truncatedNotes.clear();
+            m_newClipNoteSnapshots.clear();
+
+            QList<Note*> toMove;
+            for (Note* note : m_clip->notes()) {
+                qint64 noteStart = note->startTick();
+                qint64 noteEnd = noteStart + note->durationTicks();
+
+                if (noteStart >= m_relSplitTick) {
+                    // ノート全体が後半 → 移動対象
+                    m_newClipNoteSnapshots.append({
+                        note->pitch(),
+                        noteStart - m_relSplitTick,
+                        note->durationTicks(),
+                        note->velocity()
+                    });
+                    toMove.append(note);
+                } else if (noteEnd > m_relSplitTick) {
+                    // 分割点をまたぐノート
+                    qint64 firstHalfDuration = m_relSplitTick - noteStart;
+                    qint64 secondHalfDuration = noteEnd - m_relSplitTick;
+
+                    m_truncatedNotes.append({ note, note->durationTicks() });
+                    note->setDurationTicks(firstHalfDuration);
+
+                    m_newClipNoteSnapshots.append({
+                        note->pitch(), 0, secondHalfDuration, note->velocity()
+                    });
+                }
+            }
+            // 後半のノートを元クリップから取り出し
+            for (Note* note : toMove) {
+                m_clip->takeNote(note);
+                m_movedNotes.append(note);
+            }
+            m_ownsMoved = true;
+
+            // 新クリップにノートを作成
+            for (const auto& snap : m_newClipNoteSnapshots) {
+                m_newClip->addNote(snap.pitch, snap.startTick,
+                                   snap.durationTicks, snap.velocity);
+            }
+        }
+
+        m_clip->setDurationTicks(m_relSplitTick);
+        m_ownsNewClip = false;
+        m_firstRedo = false;
+    } else {
+        // ── 2回目以降: 保存済み状態から復元 ──
+
+        // ノートを再度分割
+        if (!m_isAudioClip) {
+            // 移動ノートを元クリップから取り出し
+            for (Note* note : m_movedNotes) {
+                m_clip->takeNote(note);
+            }
+            m_ownsMoved = true;
+
+            // スパニングノートを再トリム
+            for (const auto& tn : m_truncatedNotes) {
+                qint64 firstHalfDuration = m_relSplitTick - tn.note->startTick();
+                tn.note->setDurationTicks(firstHalfDuration);
+            }
+
+            // 新クリップにノートを再作成
+            for (const auto& snap : m_newClipNoteSnapshots) {
+                m_newClip->addNote(snap.pitch, snap.startTick,
+                                   snap.durationTicks, snap.velocity);
+            }
+        }
+
+        // オーディオデータを再分割
+        if (m_isAudioClip) {
+            m_clip->setAudioData(m_firstHalfAudioL, m_firstHalfAudioR,
+                                 m_audioSampleRate, m_audioFilePath);
+            m_newClip->setAudioData(m_secondHalfAudioL, m_secondHalfAudioR,
+                                    m_audioSampleRate, m_audioFilePath);
+        }
+
+        m_clip->setDurationTicks(m_relSplitTick);
+
+        // 新クリップをトラックに再挿入
+        m_track->insertClip(m_newClip);
+        m_ownsNewClip = false;
     }
 }

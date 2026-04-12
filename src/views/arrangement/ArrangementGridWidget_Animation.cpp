@@ -7,6 +7,7 @@
 #include "models/Track.h"
 #include "models/Clip.h"
 #include "models/Note.h"
+#include "commands/UndoCommands.h"
 #include <QPainter>
 #include <QtMath>
 #include "common/Constants.h"
@@ -397,72 +398,19 @@ void ArrangementGridWidget::splitClipAt(Track* track, Clip* clip, qint64 relSpli
 {
     if (!track || !clip || relSplitTick <= 0 || relSplitTick >= clip->durationTicks()) return;
 
-    qint64 origStart = clip->startTick();
-    qint64 origDuration = clip->durationTicks();
+    double bpm = m_project ? m_project->bpm() : 120.0;
 
-    // ── 後半クリップを先に作成 ──
-    qint64 newStart = origStart + relSplitTick;
-    qint64 newDuration = origDuration - relSplitTick;
-    Clip* newClip = track->addClip(newStart, newDuration);
-
-    if (clip->isAudioClip()) {
-        // オーディオクリップの分割: PCMサンプルを分割する
-        // tick→サンプル位置の変換
-        double bpm = m_project ? m_project->bpm() : 120.0;
-        double ticksPerSecond = bpm * TICKS_PER_BEAT / 60.0;
-        double splitSeconds = static_cast<double>(relSplitTick) / ticksPerSecond;
-        qint64 splitSample = static_cast<qint64>(splitSeconds * clip->audioSampleRate());
-
-        const QVector<float>& srcL = clip->audioSamplesL();
-        const QVector<float>& srcR = clip->audioSamplesR();
-
-        // 後半のオーディオデータ
-        QVector<float> newL, newR;
-        if (splitSample < srcL.size()) {
-            newL = srcL.mid(static_cast<int>(splitSample));
-            newR = srcR.mid(static_cast<int>(splitSample));
-        }
-        newClip->setAudioData(newL, newR, clip->audioSampleRate(), clip->audioFilePath());
-
-        // 前半のオーディオデータをトリム
-        QVector<float> trimL = srcL.mid(0, static_cast<int>(splitSample));
-        QVector<float> trimR = srcR.mid(0, static_cast<int>(splitSample));
-        clip->setAudioData(trimL, trimR, clip->audioSampleRate(), clip->audioFilePath());
-    } else {
-        // MIDIクリップのノート分割
-        QList<Note*> toRemove;
-        for (Note* note : clip->notes()) {
-            qint64 noteStart = note->startTick();
-            qint64 noteEnd = noteStart + note->durationTicks();
-
-            if (noteStart >= relSplitTick) {
-                // ノート全体が後半 → 後半クリップへ移動
-                newClip->addNote(note->pitch(), noteStart - relSplitTick,
-                                 note->durationTicks(), note->velocity());
-                toRemove.append(note);
-            } else if (noteEnd > relSplitTick) {
-                // ノートが分割点をまたいでいる → 双方に分割
-                qint64 firstHalfDuration = relSplitTick - noteStart;
-                qint64 secondHalfDuration = noteEnd - relSplitTick;
-
-                // 前半クリップ: 長さをトリム
-                note->setDurationTicks(firstHalfDuration);
-
-                // 後半クリップ: 新ノートを0開始で作成
-                newClip->addNote(note->pitch(), 0, secondHalfDuration, note->velocity());
-            }
-            // noteEnd <= relSplitTick → ノート全体が前半、そのまま残す
-        }
-        for (Note* note : toRemove) {
-            clip->removeNote(note);
-        }
+    if (m_undoStack) {
+        m_undoStack->push(new SplitClipCommand(track, clip, relSplitTick, bpm));
     }
 
-    // 前半クリップの長さを短縮
-    clip->setDurationTicks(relSplitTick);
-
-    // 新クリップにPopInアニメーション
-    startClipAnim(newClip->id(), ClipAnim::PopIn);
+    // 新クリップにPopInアニメーション（Undoコマンド実行後にクリップが追加されている）
+    if (!track->clips().isEmpty()) {
+        Clip* lastClip = track->clips().last();
+        if (lastClip != clip) {
+            startClipAnim(lastClip->id(), ClipAnim::PopIn);
+        }
+    }
 }
 
 void ArrangementGridWidget::startSlashAnim(const QPointF& center, float length, const QColor& trackColor)

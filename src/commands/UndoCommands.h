@@ -288,3 +288,48 @@ private:
     int m_trackIndex;
     bool m_ownsTrack;               // 既存
 };
+
+/**
+ * @brief クリップ分割コマンド（Undo/Redo対応）
+ */
+class SplitClipCommand : public QUndoCommand
+{
+public:
+    SplitClipCommand(Track* track, Clip* clip, qint64 relSplitTick,
+                     double bpm, QUndoCommand* parent = nullptr);
+    ~SplitClipCommand() override;
+    void undo() override;
+    void redo() override;
+
+private:
+    Track* m_track;
+    Clip* m_clip;           // 元のクリップ（前半）
+    Clip* m_newClip;        // 新しく作成した後半クリップ
+    qint64 m_relSplitTick;
+    double m_bpm;
+
+    // 元クリップの状態
+    qint64 m_origDuration;
+
+    // MIDIノート管理
+    QList<Note*> m_movedNotes;      // 分割点以降のノート（元クリップから取り出し）
+    struct TruncatedNote { Note* note; qint64 origDuration; };
+    QList<TruncatedNote> m_truncatedNotes;  // 分割点をまたぐノート
+    struct NoteSnapshot { int pitch; qint64 startTick; qint64 durationTicks; int velocity; };
+    QList<NoteSnapshot> m_newClipNoteSnapshots; // 新クリップに作成するノート情報
+
+    // オーディオデータ
+    bool m_isAudioClip;
+    QVector<float> m_origFullAudioL;
+    QVector<float> m_origFullAudioR;
+    QVector<float> m_firstHalfAudioL;
+    QVector<float> m_firstHalfAudioR;
+    QVector<float> m_secondHalfAudioL;
+    QVector<float> m_secondHalfAudioR;
+    double m_audioSampleRate;
+    QString m_audioFilePath;
+
+    bool m_ownsNewClip;
+    bool m_ownsMoved;
+    bool m_firstRedo;
+};
